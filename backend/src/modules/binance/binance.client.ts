@@ -148,6 +148,41 @@ export class BinanceClient {
       return Number(j.lastFundingRate ?? 0);
     });
   }
+
+  /**
+   * Per-symbol futures trading filters — LOT_SIZE stepSize/minQty + MIN_NOTIONAL —
+   * parsed from exchangeInfo and cached 6h. Used to size orders at the EXACT
+   * precision Binance requires (otherwise orders are rejected with -1111). The
+   * source host is fapi, which is reachable exactly when live trading is, so this
+   * is available whenever it's actually needed. Returns null if unavailable.
+   */
+  static async symbolFilters(symbol: string): Promise<{ stepSize: number; minQty: number; minNotional: number } | null> {
+    const map = await cached('fapi:exinfo', 6 * 3_600_000, async () => {
+      const res = await fetch(`${env.BINANCE_FAPI_BASE}/fapi/v1/exchangeInfo`);
+      if (!res.ok) throw Errors.upstream(`exchangeInfo ${res.status}`);
+      const j = (await res.json()) as { symbols?: Array<{ symbol: string; filters: Array<Record<string, string>> }> };
+      const m = new Map<string, { stepSize: number; minQty: number; minNotional: number }>();
+      for (const s of j.symbols ?? []) {
+        const lot = s.filters.find((f) => f.filterType === 'LOT_SIZE');
+        const notl = s.filters.find((f) => f.filterType === 'MIN_NOTIONAL');
+        m.set(s.symbol, {
+          stepSize: Number(lot?.stepSize ?? 0),
+          minQty: Number(lot?.minQty ?? 0),
+          minNotional: Number(notl?.notional ?? notl?.minNotional ?? 0),
+        });
+      }
+      return m;
+    }).catch(() => null);
+    return map ? map.get(symbol) ?? null : null;
+  }
+}
+
+/** Floor a quantity to the symbol's LOT_SIZE step (e.g. step 1 → whole units,
+ *  step 0.001 → 3dp). Binance rejects any quantity not on the step grid (-1111). */
+export function floorToStep(qty: number, step: number): number {
+  if (!step || step <= 0) return qty;
+  const decimals = Math.max(0, Math.round(-Math.log10(step)));
+  return Number((Math.floor(qty / step) * step).toFixed(decimals));
 }
 
 function mapToStr(o: Record<string, string | number>): Record<string, string> {

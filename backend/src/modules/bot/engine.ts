@@ -2,7 +2,7 @@ import type { BotConfig } from '@prisma/client';
 import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
-import { BinanceClient, type Candle } from '../binance/binance.client.js';
+import { BinanceClient, floorToStep, type Candle } from '../binance/binance.client.js';
 import { getMarketStatus, type MarketStatus } from '../binance/market.service.js';
 import { apiKeyService } from '../apikeys/apikeys.service.js';
 import { billingService } from '../fees/billing.service.js';
@@ -242,9 +242,25 @@ async function openPosition(
   }
 
   const notional = marginUsd * cfg.leverage;
-  if (notional < 5) return false; // Binance min-notional safety
-  const qty = roundQty(notional / entryPrice);
+  if (notional < 5) return false; // global Binance min-notional safety
+
+  // Per-symbol precision: floor to the symbol's LOT_SIZE step and honour minQty /
+  // minNotional, so live orders aren't rejected (-1111) or sized wrong. Falls back
+  // to the crude 3-dp rounding only when exchangeInfo isn't reachable (paper/dev).
+  const filters = await BinanceClient.symbolFilters(symbol).catch(() => null);
+  const qty = filters ? floorToStep(notional / entryPrice, filters.stepSize) : roundQty(notional / entryPrice);
   if (qty <= 0) return false;
+  if (filters) {
+    if (filters.minQty && qty < filters.minQty) {
+      await notify(userId, 'Signal skipped', `${symbol}: size ${qty} is below the exchange minimum (${filters.minQty}). Increase margin or leverage for this coin.`);
+      return false;
+    }
+    const minNotional = filters.minNotional || 5;
+    if (qty * entryPrice < minNotional) {
+      await notify(userId, 'Signal skipped', `${symbol}: order value $${(qty * entryPrice).toFixed(2)} is below the exchange minimum $${minNotional}. Increase margin or leverage.`);
+      return false;
+    }
+  }
 
   try {
     let orderId: number | undefined;
