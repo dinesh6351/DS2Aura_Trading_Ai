@@ -1,0 +1,156 @@
+import fetch from 'node-fetch';
+import { hmacSha256 } from '../../lib/crypto.js';
+import { env } from '../../config/env.js';
+import { Errors } from '../../lib/http.js';
+import { logger } from '../../lib/logger.js';
+
+/**
+ * Per-tenant Binance USDT-M Futures client.
+ *
+ * Crucially this is INSTANTIATED PER USER with that user's decrypted keys — it
+ * never reads a global key. The original single-user bot signed every request
+ * with one process-wide key; here each call is bound to one tenant's creds, so
+ * a user's bot can only ever touch that user's Binance account.
+ *
+ * Public market data (klines, funding) is fetched unsigned from the spot host,
+ * which is geo-blocked (HTTP 451) less often than the futures data host — the
+ * same lesson learned in the original project.
+ */
+
+// ── Module-level rate-limit circuit breaker (shared across tenants) ─────────
+// A -1003 ban is per-IP, so it affects every tenant on this worker. We persist
+// the ban expiry in memory and refuse ALL calls until it clears — blocked-but-
+// attempted calls would otherwise EXTEND the ban.
+let banUntilMs = 0;
+export function isBanned(): boolean { return Date.now() < banUntilMs; }
+function recordBanFromMsg(msg: string): void {
+  const m = msg.match(/banned until (\d+)/i);
+  if (m) banUntilMs = Number(m[1]);
+  else banUntilMs = Date.now() + 60_000; // conservative default
+  logger.error({ banUntilMs }, 'Binance IP ban recorded — standing down');
+}
+
+// Tiny TTL cache for public data to stay under weight limits.
+const cache = new Map<string, { at: number; ttl: number; val: unknown }>();
+async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.val as T;
+  const val = await fn();
+  cache.set(key, { at: Date.now(), ttl: ttlMs, val });
+  return val;
+}
+
+export interface BinanceCreds { apiKey: string; secret: string }
+
+export interface Candle { openTime: number; open: number; high: number; low: number; close: number; volume: number }
+
+export class BinanceClient {
+  constructor(private readonly creds: BinanceCreds) {}
+
+  // ── signed futures call ───────────────────────────────────────────────
+  private async signed<T>(method: 'GET' | 'POST' | 'DELETE', path: string,
+    params: Record<string, string | number> = {}): Promise<T> {
+    if (isBanned()) throw Errors.tooMany('Binance rate-limit ban active');
+    const ts = Date.now();
+    const qs = new URLSearchParams({ ...mapToStr(params), timestamp: String(ts), recvWindow: '5000' });
+    const sig = hmacSha256(this.creds.secret, qs.toString());
+    qs.append('signature', sig);
+    const url = `${env.BINANCE_FAPI_BASE}${path}?${qs.toString()}`;
+    const res = await fetch(url, { method, headers: { 'X-MBX-APIKEY': this.creds.apiKey } });
+    const text = await res.text();
+    if (!res.ok) {
+      if (text.includes('-1003') || /banned/i.test(text)) recordBanFromMsg(text);
+      throw Errors.upstream(`Binance ${res.status}`, safeJson(text));
+    }
+    return safeJson(text) as T;
+  }
+
+  // ── account ────────────────────────────────────────────────────────────
+  async getBalance(): Promise<{ totalUsdt: number; availableUsdt: number }> {
+    const data = await this.signed<Array<{ asset: string; balance: string; availableBalance: string }>>(
+      'GET', '/fapi/v2/balance');
+    const usdt = data.find((b) => b.asset === 'USDT');
+    return { totalUsdt: Number(usdt?.balance ?? 0), availableUsdt: Number(usdt?.availableBalance ?? 0) };
+  }
+
+  async getPositions(): Promise<Array<{ symbol: string; positionAmt: number; entryPrice: number; markPrice: number; unRealizedProfit: number; leverage: number }>> {
+    const data = await this.signed<Array<Record<string, string>>>('GET', '/fapi/v2/positionRisk');
+    return data
+      .filter((p) => Number(p.positionAmt) !== 0)
+      .map((p) => ({
+        symbol: p.symbol!, positionAmt: Number(p.positionAmt),
+        entryPrice: Number(p.entryPrice), markPrice: Number(p.markPrice),
+        unRealizedProfit: Number(p.unRealizedProfit), leverage: Number(p.leverage),
+      }));
+  }
+
+  /** Today's realized PnL fills (for daily-cap + fee accrual). */
+  async getRealizedIncome(sinceMs: number) {
+    return this.signed<Array<{ symbol: string; income: string; time: number; tranId: number; incomeType: string }>>(
+      'GET', '/fapi/v1/income', { incomeType: 'REALIZED_PNL', startTime: sinceMs, limit: 1000 });
+  }
+
+  async setLeverage(symbol: string, leverage: number): Promise<void> {
+    try { await this.signed('POST', '/fapi/v1/leverage', { symbol, leverage }); }
+    catch (e) { logger.warn({ e, symbol }, 'setLeverage failed (continuing)'); }
+  }
+
+  /** Market order in coin units (qty). Caller computes qty from USD notional. */
+  async marketOrder(symbol: string, side: 'BUY' | 'SELL', quantity: number, reduceOnly = false) {
+    return this.signed('POST', '/fapi/v1/order', {
+      symbol, side, type: 'MARKET', quantity, ...(reduceOnly ? { reduceOnly: 'true' } : {}),
+    });
+  }
+
+  // ── validation (used by api-key onboarding) ─────────────────────────────
+  async validate(): Promise<{ canTrade: boolean; canWithdraw: boolean }> {
+    const acct = await this.signed<{ canTrade: boolean; canWithdraw?: boolean }>('GET', '/fapi/v2/account');
+    return { canTrade: !!acct.canTrade, canWithdraw: !!acct.canWithdraw };
+  }
+
+  // ── public market data (no auth, spot host, cached) ─────────────────────
+  static async klines(symbol: string, interval: string, limit = 100): Promise<Candle[]> {
+    return cached(`kl:${symbol}:${interval}:${limit}`, 3_000, async () => {
+      const url = `${env.BINANCE_SPOT_BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const res = await fetch(url);
+      if (!res.ok) throw Errors.upstream(`klines ${res.status}`);
+      const raw = (await res.json()) as unknown[][];
+      return raw.map((k) => ({
+        openTime: Number(k[0]), open: Number(k[1]), high: Number(k[2]),
+        low: Number(k[3]), close: Number(k[4]), volume: Number(k[5]),
+      }));
+    });
+  }
+
+  /** Batch last-price for live PnL ticking. Public spot host, cached ~1.5s so a
+   *  per-second dashboard poll collapses to one upstream call. */
+  static async tickerPrices(symbols: string[]): Promise<Record<string, number>> {
+    if (!symbols.length) return {};
+    const key = `tick:${[...symbols].sort().join(',')}`;
+    return cached(key, 1_500, async () => {
+      const param = encodeURIComponent(JSON.stringify(symbols));
+      const url = `${env.BINANCE_SPOT_BASE}/api/v3/ticker/price?symbols=${param}`;
+      const res = await fetch(url);
+      if (!res.ok) throw Errors.upstream(`ticker ${res.status}`);
+      const raw = (await res.json()) as Array<{ symbol: string; price: string }>;
+      const out: Record<string, number> = {};
+      for (const r of raw) out[r.symbol] = Number(r.price);
+      return out;
+    });
+  }
+
+  static async funding(symbol: string): Promise<number> {
+    return cached(`fund:${symbol}`, 60_000, async () => {
+      const url = `${env.BINANCE_FAPI_BASE}/fapi/v1/premiumIndex?symbol=${symbol}`;
+      const res = await fetch(url);
+      if (!res.ok) return 0;
+      const j = (await res.json()) as { lastFundingRate?: string };
+      return Number(j.lastFundingRate ?? 0);
+    });
+  }
+}
+
+function mapToStr(o: Record<string, string | number>): Record<string, string> {
+  return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, String(v)]));
+}
+function safeJson(t: string): unknown { try { return JSON.parse(t); } catch { return t; } }

@@ -1,0 +1,382 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { TradingMode } from '@platform/shared';
+import { api } from '@/lib/api';
+import { AppNav } from '@/components/AppNav';
+
+interface KeyRow { id: string; label: string; status: string; canTrade: boolean; canWithdraw: boolean; lastValidatedAt: string | null; }
+interface ConnTest { connected: boolean; canTrade: boolean; canWithdraw: boolean; totalBalance: number; availableBalance: number; warning?: string; }
+interface TgStatus { enabled: boolean; configured: boolean; chatId: string | null; }
+interface BotCfg {
+  status: string; mode: string; paperTrading: boolean; telegramEnabled: boolean; telegramChatId: string | null;
+  scoreThreshold: number; leverage: number; marginPerTradeUsd: string; slPercent: string; tpRR: string;
+  maxConcurrentPositions: number; maxTradesPerDay: number; maxConsecutiveLosses: number; lossCooldownMin: number; marginGuardPct: number;
+  useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean;
+}
+
+export default function SettingsPage() {
+  const [keys, setKeys] = useState<KeyRow[]>([]);
+  const [tg, setTg] = useState<TgStatus>();
+  const [bot, setBot] = useState<BotCfg>();
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+
+  const load = useCallback(async () => {
+    const [k, t, b, wl] = await Promise.all([
+      api.get<KeyRow[]>('/api/apikeys').catch(() => []),
+      api.get<TgStatus>('/api/notifications/telegram').catch(() => undefined),
+      api.get<BotCfg>('/api/bot/status').catch(() => undefined),
+      api.get<string[]>('/api/trading/watchlist').catch(() => []),
+    ]);
+    setKeys(k); setTg(t); setBot(b); setWatchlist(wl);
+  }, []);
+
+  useEffect(() => { api.refresh().then(load).catch(() => { window.location.href = '/login'; }); }, [load]);
+
+  const hasKey = keys.some((k) => k.status === 'VALID');
+  const ready = hasKey; // bot can start once a valid key exists
+
+  return (
+    <>
+      <AppNav active="settings" />
+      <main className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
+        <header>
+          <h1 className="text-accent text-xl font-bold">⚙️ Setup &amp; Credentials</h1>
+          <p className="text-muted text-sm">Connect your own Binance account &amp; Telegram bot, tune the strategy, test in Paper mode, then go Live. Each step validates before saving — no guesswork.</p>
+        </header>
+
+        <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
+
+        <BinanceSection keys={keys} onChange={load} />
+        <TelegramSection tg={tg} onChange={load} />
+        {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
+        {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
+      </main>
+    </>
+  );
+}
+
+// ── Setup checklist ──────────────────────────────────────────────────────────
+function SetupChecklist({ hasKey, tgConfigured, paper, running }: { hasKey: boolean; tgConfigured: boolean; paper: boolean; running: boolean }) {
+  const steps = [
+    { done: hasKey, label: '1. Connect Binance Futures API key' },
+    { done: tgConfigured, label: '2. Connect Telegram alerts (optional)', optional: true },
+    { done: true, label: `3. Trading mode: ${paper ? 'PAPER (safe test)' : 'LIVE (real funds)'}` },
+    { done: running, label: '4. Start the bot' },
+  ];
+  return (
+    <section className="card">
+      <p className="label mb-2">Setup checklist</p>
+      <div className="grid sm:grid-cols-2 gap-2 text-sm">
+        {steps.map((s) => (
+          <div key={s.label} className={`flex items-center gap-2 ${s.done ? 'text-accent' : 'text-muted'}`}>
+            <span>{s.done ? '✅' : s.optional ? '⚪' : '⬜'}</span><span>{s.label}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Binance ──────────────────────────────────────────────────────────────────
+function BinanceSection({ keys, onChange }: { keys: KeyRow[]; onChange: () => void }) {
+  const [apiKey, setApiKey] = useState('');
+  const [secret, setSecret] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [warn, setWarn] = useState('');
+  const [test, setTest] = useState<ConnTest>();
+  const [err, setErr] = useState('');
+  const existing = keys[0];
+
+  async function connect() {
+    setErr(''); setNote(''); setWarn(''); setBusy(true);
+    try {
+      const r = await api.post<{ warning?: string }>('/api/apikeys', { apiKey, secret });
+      setNote('✅ Key validated against Binance and stored encrypted.');
+      if (r.warning) setWarn(r.warning);
+      setApiKey(''); setSecret(''); onChange();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function runTest() {
+    setErr(''); setTest(undefined); setBusy(true);
+    try { setTest(await api.post<ConnTest>('/api/apikeys/test')); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function remove(id: string) {
+    if (!confirm('Remove this API key? The bot will stop.')) return;
+    await api.del(`/api/apikeys/${id}`); onChange();
+  }
+
+  return (
+    <section className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="label">🔑 Binance Futures API key</p>
+        {existing && <span className={existing.status === 'VALID' ? 'badge-up text-xs' : 'text-warn text-xs'}>{existing.status}</span>}
+      </div>
+
+      {existing ? (
+        <div className="text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-muted">Trade permission</span><span className={existing.canTrade ? 'badge-up' : 'badge-down'}>{existing.canTrade ? 'YES' : 'NO'}</span></div>
+          <div className="flex justify-between"><span className="text-muted">Withdraw permission</span><span className={existing.canWithdraw ? 'badge-down' : 'badge-up'}>{existing.canWithdraw ? '⚠ ENABLED (disable it!)' : 'disabled (good)'}</span></div>
+          <div className="flex justify-between"><span className="text-muted">Last validated</span><span>{existing.lastValidatedAt ? new Date(existing.lastValidatedAt).toLocaleString() : '—'}</span></div>
+          <div className="flex gap-2 pt-2">
+            <button className="btn text-xs" disabled={busy} onClick={runTest}>{busy ? '…' : '🔌 Test connection'}</button>
+            <button className="btn-danger text-xs" onClick={() => remove(existing.id)}>Remove key</button>
+          </div>
+          {test && (
+            <div className="bg-bg rounded p-2 border border-green-900/30 mt-2 text-xs">
+              <p className="badge-up">✅ Connected to Binance</p>
+              <p>Balance: <b>${test.totalBalance.toFixed(2)}</b> · Available: <b>${test.availableBalance.toFixed(2)}</b></p>
+              {test.warning && <p className="text-warn mt-1">⚠ {test.warning}</p>}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <p className="text-muted text-xs">Create a <b>Futures-enabled, trade-only</b> key on Binance (API Management). <b>Do NOT enable withdrawals.</b> See the setup guide below for exact steps.</p>
+          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Secret Key" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <button className="btn w-full" disabled={busy || !apiKey || !secret} onClick={connect}>{busy ? 'Validating…' : 'Validate & connect'}</button>
+        </>
+      )}
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {warn && <p className="text-warn text-sm">⚠ {warn}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+      <BinanceGuide />
+    </section>
+  );
+}
+
+function BinanceGuide() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-green-900/20 pt-2">
+      <button className="text-accent text-xs" onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} How to create a Binance Futures API key (no withdrawals)</button>
+      {open && (
+        <ol className="list-decimal ml-5 mt-2 text-xs text-muted space-y-1">
+          <li>Log in to Binance → profile menu → <b>API Management</b>.</li>
+          <li>Click <b>Create API</b> → choose <b>System generated</b> → name it (e.g. &quot;DS2Aura bot&quot;) → verify with 2FA.</li>
+          <li>Copy the <b>API Key</b> and <b>Secret Key</b> (the secret is shown only once).</li>
+          <li>Click <b>Edit restrictions</b>: enable <b>Enable Futures</b>. Leave <b>Enable Withdrawals OFF</b>.</li>
+          <li>(Recommended) Restrict access to trusted IPs only.</li>
+          <li>Make sure your Binance <b>Futures (USDⓈ-M) wallet is funded</b> with USDT.</li>
+          <li>Paste both keys above and click <b>Validate &amp; connect</b>.</li>
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// ── Telegram ───────────────────────────────────────────────────────────────
+function TelegramSection({ tg, onChange }: { tg?: TgStatus; onChange: () => void }) {
+  const [botToken, setBotToken] = useState('');
+  const [chatId, setChatId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [err, setErr] = useState('');
+
+  async function save() {
+    setErr(''); setNote(''); setBusy(true);
+    try {
+      const r = await api.post<{ botName: string }>('/api/notifications/telegram', { botToken, chatId });
+      setNote(`✅ Connected${r.botName ? ` to @${r.botName}` : ''}. Sending a test message…`);
+      await api.post('/api/notifications/telegram/test');
+      setNote(`✅ Connected${r.botName ? ` to @${r.botName}` : ''}. Test message sent — check your Telegram.`);
+      setBotToken(''); setChatId(''); onChange();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function test() {
+    setErr(''); setNote(''); setBusy(true);
+    try { await api.post('/api/notifications/telegram/test'); setNote('✅ Test message sent — check your Telegram.'); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function disable() { await api.post('/api/notifications/telegram/disable'); onChange(); }
+
+  return (
+    <section className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="label">📨 Telegram alerts (your own bot)</p>
+        {tg?.enabled && <span className="badge-up text-xs">ENABLED{tg.chatId ? ` · chat ${tg.chatId}` : ''}</span>}
+      </div>
+
+      {tg?.configured && tg.enabled ? (
+        <div className="flex gap-2">
+          <button className="btn text-xs" disabled={busy} onClick={test}>{busy ? '…' : '📨 Send test message'}</button>
+          <button className="btn-danger text-xs" onClick={disable}>Disable</button>
+        </div>
+      ) : (
+        <>
+          <p className="text-muted text-xs">Get trade alerts in <b>your</b> Telegram. Create a bot with @BotFather and paste its token + your chat id (guide below).</p>
+          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Bot token (123456:ABC-...)" value={botToken} onChange={(e) => setBotToken(e.target.value)} />
+          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Chat ID (e.g. 123456789)" value={chatId} onChange={(e) => setChatId(e.target.value)} />
+          <button className="btn w-full" disabled={busy || !botToken || !chatId} onClick={save}>{busy ? 'Saving…' : 'Save & send test'}</button>
+        </>
+      )}
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+      <TelegramGuide />
+    </section>
+  );
+}
+
+function TelegramGuide() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-green-900/20 pt-2">
+      <button className="text-accent text-xs" onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} How to create your Telegram bot &amp; find your chat id</button>
+      {open && (
+        <ol className="list-decimal ml-5 mt-2 text-xs text-muted space-y-1">
+          <li>In Telegram, open <b>@BotFather</b> → send <code>/newbot</code>.</li>
+          <li>Pick a name and a username ending in <code>bot</code> (e.g. <code>my_ds2aura_bot</code>).</li>
+          <li>BotFather replies with a <b>token</b> like <code>123456789:ABCdef...</code> — copy it into &quot;Bot token&quot; above.</li>
+          <li>Open <b>your new bot</b> and press <b>Start</b> (send any message) so it can message you.</li>
+          <li>To get your <b>chat id</b>: message <b>@userinfobot</b> — it replies with your numeric id. (For a group, add <b>@RawDataBot</b> and read <code>chat.id</code>.)</li>
+          <li>Paste the chat id above → <b>Save &amp; send test</b>. You should receive a confirmation message.</li>
+        </ol>
+      )}
+    </div>
+  );
+}
+
+// ── Trading config ───────────────────────────────────────────────────────────
+function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watchlist: string[]; onChange: () => void }) {
+  const [cfg, setCfg] = useState({
+    scoreThreshold: bot.scoreThreshold, leverage: bot.leverage, marginPerTradeUsd: Number(bot.marginPerTradeUsd),
+    slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR), maxConcurrentPositions: bot.maxConcurrentPositions,
+    maxTradesPerDay: bot.maxTradesPerDay, maxConsecutiveLosses: bot.maxConsecutiveLosses,
+    lossCooldownMin: bot.lossCooldownMin, marginGuardPct: bot.marginGuardPct,
+  });
+  const [toggles, setToggles] = useState({
+    useAdxFilter: bot.useAdxFilter, useEmaTrend: bot.useEmaTrend, useRsi: bot.useRsi, useVolume: bot.useVolume,
+    useAtr: bot.useAtr, useBreakEven: bot.useBreakEven, useTrailingStop: bot.useTrailingStop,
+  });
+  const [wl, setWl] = useState(watchlist.join(', '));
+  const [note, setNote] = useState('');
+  const [err, setErr] = useState('');
+  const set = (k: keyof typeof cfg) => (e: React.ChangeEvent<HTMLInputElement>) => setCfg({ ...cfg, [k]: Number(e.target.value) });
+  const tog = (k: keyof typeof toggles) => () => setToggles({ ...toggles, [k]: !toggles[k] });
+
+  async function setMode(mode: string) { setErr(''); try { await api.post('/api/bot/mode', { mode }); setNote(`Mode → ${mode}`); onChange(); } catch (e) { setErr((e as Error).message); } }
+  async function setPaper(paper: boolean) {
+    setErr('');
+    try { await api.patch('/api/bot/config', { paperTrading: paper }); setNote(paper ? 'Switched to PAPER (safe test)' : 'Switched to LIVE — real funds at risk'); onChange(); }
+    catch (e) { setErr((e as Error).message); }
+  }
+  async function saveAll() {
+    setErr(''); setNote('');
+    try {
+      await api.patch('/api/bot/config', { ...cfg, ...toggles });
+      const symbols = wl.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+      await api.put('/api/trading/watchlist', { symbols });
+      setNote('✅ Settings + watchlist saved'); onChange(); setTimeout(() => setNote(''), 2500);
+    } catch (e) { setErr((e as Error).message); }
+  }
+
+  return (
+    <section className="card space-y-4">
+      <p className="label">📊 Trading configuration</p>
+
+      {/* Paper / Live toggle */}
+      <div className={`rounded p-3 border ${bot.paperTrading ? 'border-accent/40 bg-accent/5' : 'border-warn/50 bg-warn/10'}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="font-bold">{bot.paperTrading ? '🧪 Paper Trading (safe test)' : '🔴 Live Trading (real funds)'}</p>
+            <p className="text-muted text-xs">{bot.paperTrading ? 'Simulated fills on live market data — no real orders. Test the full pipeline risk-free.' : 'The bot places REAL orders on your Binance account. Make sure you tested in Paper first.'}</p>
+          </div>
+          <div className="flex gap-1">
+            <button className={`text-xs ${bot.paperTrading ? 'btn' : 'btn opacity-60'}`} onClick={() => setPaper(true)}>Paper</button>
+            <button className={`text-xs ${!bot.paperTrading ? 'btn-danger' : 'btn opacity-60'}`} onClick={() => setPaper(false)}>Live</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mode presets */}
+      <div>
+        <p className="label mb-1">Risk preset</p>
+        <div className="flex gap-2">
+          {Object.values(TradingMode).map((m) => (
+            <button key={m} className={`text-xs flex-1 ${bot.mode === m ? 'btn' : 'btn opacity-60'}`} onClick={() => setMode(m)}>{m}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Numeric params */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <Num label="Score threshold" v={cfg.scoreThreshold} onChange={set('scoreThreshold')} />
+        <Num label="Leverage (×)" v={cfg.leverage} onChange={set('leverage')} />
+        <Num label="Margin / trade ($)" v={cfg.marginPerTradeUsd} onChange={set('marginPerTradeUsd')} />
+        <Num label="Stop loss (%)" v={cfg.slPercent} onChange={set('slPercent')} step="0.1" />
+        <Num label="Take profit (R:R)" v={cfg.tpRR} onChange={set('tpRR')} step="0.1" />
+        <Num label="Max positions" v={cfg.maxConcurrentPositions} onChange={set('maxConcurrentPositions')} />
+        <Num label="Max trades / day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
+        <Num label="Max consec. losses" v={cfg.maxConsecutiveLosses} onChange={set('maxConsecutiveLosses')} />
+        <Num label="Loss cooldown (min)" v={cfg.lossCooldownMin} onChange={set('lossCooldownMin')} />
+        <Num label="Margin guard (%)" v={cfg.marginGuardPct} onChange={set('marginGuardPct')} />
+      </div>
+
+      {/* Strategy toggles */}
+      <div>
+        <p className="label mb-1">Strategy filters &amp; protection</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+          <Toggle label="ADX filter" on={toggles.useAdxFilter} onClick={tog('useAdxFilter')} />
+          <Toggle label="EMA trend" on={toggles.useEmaTrend} onClick={tog('useEmaTrend')} />
+          <Toggle label="RSI" on={toggles.useRsi} onClick={tog('useRsi')} />
+          <Toggle label="Volume" on={toggles.useVolume} onClick={tog('useVolume')} />
+          <Toggle label="ATR" on={toggles.useAtr} onClick={tog('useAtr')} />
+          <Toggle label="Break-even" on={toggles.useBreakEven} onClick={tog('useBreakEven')} />
+          <Toggle label="Trailing stop" on={toggles.useTrailingStop} onClick={tog('useTrailingStop')} />
+        </div>
+      </div>
+
+      {/* Watchlist */}
+      <div>
+        <p className="label mb-1">Watchlist (comma-separated)</p>
+        <textarea className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
+      </div>
+
+      <button className="btn w-full" onClick={saveAll}>Save all settings</button>
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+    </section>
+  );
+}
+
+// ── Activation ───────────────────────────────────────────────────────────────
+function ActivationSection({ bot, ready, onChange }: { bot: BotCfg; ready: boolean; onChange: () => void }) {
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function act(action: 'start' | 'pause' | 'stop') {
+    setErr(''); setBusy(true);
+    try { await api.post(`/api/bot/${action}`); onChange(); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  return (
+    <section className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="label">🚀 Activate</p>
+        <span className={bot.status === 'RUNNING' ? 'badge-up' : 'text-muted'}>{bot.status} · {bot.paperTrading ? 'PAPER' : 'LIVE'}</span>
+      </div>
+      {!ready && <p className="text-warn text-sm">Connect a valid Binance API key above before starting the bot.</p>}
+      <p className="text-muted text-xs">Recommended: start in <b>Paper</b> mode, watch a few trades on the dashboard &amp; Telegram, confirm everything works, then switch to <b>Live</b>.</p>
+      <div className="flex gap-2">
+        <button className="btn" disabled={busy || !ready} onClick={() => act('start')}>▶ Start bot</button>
+        <button className="btn" disabled={busy} onClick={() => act('pause')}>⏸ Pause</button>
+        <button className="btn-danger" disabled={busy} onClick={() => act('stop')}>⏹ Stop</button>
+      </div>
+      {err && <p className="text-danger text-sm">{err}</p>}
+    </section>
+  );
+}
+
+// ── small inputs ─────────────────────────────────────────────────────────────
+function Num({ label, v, onChange, step }: { label: string; v: number; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; step?: string }) {
+  return <label className="block"><span className="label">{label}</span><input type="number" step={step} value={v} onChange={onChange} className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 mt-0.5" /></label>;
+}
+function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={`flex items-center justify-between rounded px-2 py-1.5 border ${on ? 'border-accent/50 text-accent' : 'border-green-900/40 text-muted'}`}>
+      <span>{label}</span><span>{on ? 'ON' : 'OFF'}</span>
+    </button>
+  );
+}

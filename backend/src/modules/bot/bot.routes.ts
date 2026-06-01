@@ -1,0 +1,113 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { TradingMode, MODE_PRESETS } from '@platform/shared';
+import { prisma } from '../../lib/prisma.js';
+import { asyncHandler } from '../../middleware/error.js';
+import { authenticate, type AuthedRequest } from '../../middleware/auth.js';
+import { ok, Errors } from '../../lib/http.js';
+import { billingService } from '../fees/billing.service.js';
+
+export const botRouter = Router();
+botRouter.use(authenticate);
+
+const uid = (req: unknown) => (req as AuthedRequest).auth.userId;
+
+/** GET /api/bot/status — current bot config + runtime state for THIS user. */
+botRouter.get('/status', asyncHandler(async (req, res) => {
+  const cfg = await prisma.botConfig.findUnique({ where: { userId: uid(req) } });
+  if (!cfg) throw Errors.notFound('No bot config');
+  // Never leak the (encrypted) Telegram token envelope to the client.
+  const { telegramBotTokenEnc, ...safe } = cfg;
+  void telegramBotTokenEnc;
+  return ok(res, safe);
+}));
+
+/** POST /api/bot/start — requires a valid API key on file. */
+botRouter.post('/start', asyncHandler(async (req, res) => {
+  const userId = uid(req);
+  if (!(await billingService.canTradeNow(userId))) {
+    throw Errors.forbidden('Your trial/subscription has ended. Subscribe to re-enable the bot (view-only until then).');
+  }
+  const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID', canTrade: true } });
+  if (!key) throw Errors.badRequest('Connect a valid Binance key with Futures permission first');
+  const cfg = await prisma.botConfig.update({
+    where: { userId }, data: { status: 'RUNNING', pausedReason: null, consecutiveLosses: 0 },
+  });
+  await prisma.auditLog.create({ data: { userId, action: 'BOT_START' } });
+  return ok(res, cfg);
+}));
+
+botRouter.post('/pause', asyncHandler(async (req, res) => {
+  const userId = uid(req);
+  const cfg = await prisma.botConfig.update({ where: { userId }, data: { status: 'PAUSED' } });
+  await prisma.auditLog.create({ data: { userId, action: 'BOT_PAUSE' } });
+  return ok(res, cfg);
+}));
+
+botRouter.post('/stop', asyncHandler(async (req, res) => {
+  const userId = uid(req);
+  const cfg = await prisma.botConfig.update({ where: { userId }, data: { status: 'STOPPED' } });
+  await prisma.auditLog.create({ data: { userId, action: 'BOT_STOP' } });
+  return ok(res, cfg);
+}));
+
+/** POST /api/bot/mode — apply a risk preset (Conservative/Balanced/Aggressive). */
+botRouter.post('/mode', asyncHandler(async (req, res) => {
+  const userId = uid(req);
+  const mode = z.nativeEnum(TradingMode).parse(req.body.mode);
+  const p = MODE_PRESETS[mode];
+  const cfg = await prisma.botConfig.update({
+    where: { userId },
+    data: { mode, scoreThreshold: p.scoreThreshold, leverage: p.leverage,
+      marginPerTradeUsd: p.marginPerTradeUsd, slPercent: p.slPercent, tpRR: p.tpRR,
+      maxConcurrentPositions: p.maxConcurrentPositions, maxTradesPerDay: p.maxTradesPerDay,
+      maxConsecutiveLosses: p.maxConsecutiveLosses, lossCooldownMin: p.lossCooldownMin },
+  });
+  await prisma.auditLog.create({ data: { userId, action: 'BOT_MODE_CHANGE', metadata: { mode } } });
+  return ok(res, cfg);
+}));
+
+/** PATCH /api/bot/config — fine-grained settings (no code change needed). */
+const configSchema = z.object({
+  paperTrading: z.boolean().optional(),
+  scoreThreshold: z.number().min(50).max(100).optional(),
+  leverage: z.number().min(1).max(50).optional(),
+  marginPerTradeUsd: z.number().min(1).max(100000).optional(),
+  dynamicSizing: z.boolean().optional(),
+  slPercent: z.number().min(0.1).max(20).optional(),
+  tpRR: z.number().min(0.5).max(20).optional(),
+  maxConcurrentPositions: z.number().min(1).max(20).optional(),
+  maxTradesPerDay: z.number().min(1).max(100).optional(),
+  maxConsecutiveLosses: z.number().min(1).max(20).optional(),
+  lossCooldownMin: z.number().min(0).max(720).optional(),
+  marginGuardPct: z.number().min(10).max(100).optional(),
+  useAdxFilter: z.boolean().optional(),
+  useEmaTrend: z.boolean().optional(),
+  useRsi: z.boolean().optional(),
+  useVolume: z.boolean().optional(),
+  useAtr: z.boolean().optional(),
+  useBreakEven: z.boolean().optional(),
+  useTrailingStop: z.boolean().optional(),
+});
+
+botRouter.patch('/config', asyncHandler(async (req, res) => {
+  const userId = uid(req);
+  const patch = configSchema.parse(req.body);
+  // Don't let a user flip paper⇄live while positions are open — the watchdog
+  // branches on this flag, so a mid-flight switch would orphan open positions.
+  if (patch.paperTrading !== undefined) {
+    const open = await prisma.position.count({ where: { userId, status: 'OPEN' } });
+    if (open > 0) throw Errors.badRequest('Close all open positions before switching between Paper and Live trading.');
+  }
+  const cfg = await prisma.botConfig.update({ where: { userId }, data: patch });
+  await prisma.auditLog.create({ data: { userId, action: 'BOT_CONFIG_CHANGE', metadata: patch } });
+  return ok(res, cfg);
+}));
+
+/** GET /api/bot/log — recent bot activity (notifications channel). */
+botRouter.get('/log', asyncHandler(async (req, res) => {
+  const items = await prisma.notification.findMany({
+    where: { userId: uid(req) }, orderBy: { createdAt: 'desc' }, take: 50,
+  });
+  return ok(res, items);
+}));

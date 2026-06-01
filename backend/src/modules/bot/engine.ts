@@ -1,0 +1,408 @@
+import type { BotConfig } from '@prisma/client';
+import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
+import { prisma } from '../../lib/prisma.js';
+import { logger } from '../../lib/logger.js';
+import { BinanceClient, type Candle } from '../binance/binance.client.js';
+import { getMarketStatus, type MarketStatus } from '../binance/market.service.js';
+import { apiKeyService } from '../apikeys/apikeys.service.js';
+import { billingService } from '../fees/billing.service.js';
+import { realtime } from '../notifications/realtime.js';
+import { sendUserTelegram } from '../notifications/telegram.service.js';
+import {
+  calcEMA, calcVWAP, calcRSI, calcMACD, calcATR, calcADX, avgVolume, emaSlope,
+  detectCandlePattern, findSwingLevels, detectMarketStructure, computeBiasOnTf,
+} from './indicators.js';
+import { runSafetyCheck, type StrategyCtx } from './strategy.js';
+
+const TIMEFRAME = '1m';
+const MULTI_TFS = ['5m', '15m', '1h'];
+
+/** Highest profit fraction we may lock at the given P&L, or null if not yet armed. */
+function profitLadderLock(pnlFrac: number): number | null {
+  let lock: number | null = null;
+  for (const r of PROFIT_LADDER) if (pnlFrac >= r.trigger) lock = r.lock;
+  return lock;
+}
+
+interface ProtectionDecision { close: boolean; reason: 'TP' | 'SL' | 'TRAIL'; newStopLoss: number | null; lockPct: number | null; }
+
+/**
+ * Pure protection evaluator shared by the live and paper watchdogs. Decides
+ * whether to close, and whether the stop should ratchet up. With break-even or
+ * trailing enabled it uses the profit-lock ladder + a +5% cap; otherwise a fixed
+ * SL / (slPct × tpRR) TP.
+ */
+function evaluateProtection(
+  pos: { side: string; entryPrice: unknown; stopLoss: unknown; trailingArmed?: boolean },
+  mark: number,
+  cfg: BotConfig,
+): ProtectionDecision {
+  const entry = Number(pos.entryPrice);
+  const long = pos.side === 'LONG';
+  const pnlFrac = long ? (mark - entry) / entry : (entry - mark) / entry;
+  const slPct = Number(cfg.slPercent) / 100;
+  const tpPct = slPct * Number(cfg.tpRR);
+  const protectionOn = cfg.useTrailingStop || cfg.useBreakEven;
+
+  // Take profit: +5% cap when laddering, else the fixed R:R target.
+  const tpLevel = protectionOn ? TAKE_PROFIT_CAP : tpPct;
+  if (pnlFrac >= tpLevel) return { close: true, reason: 'TP', newStopLoss: null, lockPct: null };
+
+  // Ratchet the stop up via the ladder (favorable moves only).
+  let newStopLoss: number | null = null;
+  let lockPct: number | null = null;
+  if (protectionOn) {
+    lockPct = profitLadderLock(pnlFrac);
+    if (lockPct != null) {
+      const candidate = long ? entry * (1 + lockPct) : entry * (1 - lockPct);
+      const baseStop = long ? entry * (1 - slPct) : entry * (1 + slPct);
+      const cur = pos.stopLoss != null ? Number(pos.stopLoss) : baseStop;
+      if (long ? candidate > cur : candidate < cur) newStopLoss = candidate;
+    }
+  }
+
+  // Close if mark has crossed the effective stop (trailed level or hard stop).
+  const baseStop = long ? entry * (1 - slPct) : entry * (1 + slPct);
+  const curStop = pos.stopLoss != null ? Number(pos.stopLoss) : baseStop;
+  const effStop = newStopLoss ?? curStop;
+  const hitStop = long ? mark <= effStop : mark >= effStop;
+  if (hitStop) {
+    const reason: 'TRAIL' | 'SL' = pos.trailingArmed ? 'TRAIL' : 'SL';
+    return { close: true, reason, newStopLoss: null, lockPct };
+  }
+  return { close: false, reason: 'SL', newStopLoss, lockPct };
+}
+
+/**
+ * Evaluate + (optionally) execute one tick for a SINGLE tenant.
+ *
+ * Every Binance interaction goes through a client bound to THIS user's keys, so
+ * there is no way for one user's tick to read or mutate another's account.
+ */
+export async function tickUser(userId: string): Promise<void> {
+  const cfg = await prisma.botConfig.findUnique({ where: { userId } });
+  if (!cfg || cfg.status !== 'RUNNING') return;
+
+  let creds;
+  try {
+    creds = await apiKeyService.getDecryptedCreds(userId);
+  } catch (e) {
+    await pauseWithError(userId, 'No valid Binance API key');
+    logger.warn({ userId, e }, 'tick aborted: no creds');
+    return;
+  }
+  const client = new BinanceClient(creds);
+
+  // 1. sync account + positions (also drives the watchdog). In PAPER mode we read
+  // the real balance for display but never place/close real orders.
+  const [balance, exchangePositions] = await Promise.all([client.getBalance(), client.getPositions()]);
+  await prisma.tradingAccount.updateMany({
+    where: { userId },
+    data: { totalBalance: balance.totalUsdt, availableBalance: balance.availableUsdt, lastSyncedAt: new Date() },
+  });
+  if (cfg.paperTrading) await runPaperWatchdog(userId, cfg);
+  else await runWatchdog(userId, client, cfg, exchangePositions);
+
+  // 2. subscription gate — VIEW-ONLY when trial/subscription has lapsed.
+  // The watchdog above STILL protects existing positions, but no new trades or
+  // signals are produced (bot + AI signals disabled until the user renews).
+  if (!(await billingService.canTradeNow(userId))) {
+    realtime.publish(`user:${userId}:signals`, { decisions: [], viewOnly: true, at: Date.now() });
+    return;
+  }
+
+  // 3. risk pre-checks
+  if (cfg.consecutiveLosses >= cfg.maxConsecutiveLosses) {
+    await pauseWithError(userId, `Auto-paused after ${cfg.consecutiveLosses} consecutive losses`);
+    return;
+  }
+  if (cfg.tradesToday >= cfg.maxTradesPerDay) return;
+  // Concurrency: in PAPER mode count our simulated DB positions; in LIVE mode
+  // count what's actually on the exchange.
+  const dbOpen = await prisma.position.findMany({ where: { userId, status: 'OPEN' }, select: { symbol: true } });
+  const openCount = cfg.paperTrading ? dbOpen.length : exchangePositions.length;
+  if (openCount >= cfg.maxConcurrentPositions) return;
+
+  // 50% margin guard
+  const usedMarginPct = balance.totalUsdt > 0
+    ? ((balance.totalUsdt - balance.availableUsdt) / balance.totalUsdt) * 100 : 100;
+  if (usedMarginPct >= cfg.marginGuardPct) return;
+
+  // 3. scan watchlist
+  const watchlist = await prisma.watchlist.findFirst({ where: { userId, isDefault: true } });
+  const symbols = watchlist?.symbols ?? ['BTCUSDT'];
+  const heldSymbols = new Set(
+    cfg.paperTrading ? dbOpen.map((p) => p.symbol) : exchangePositions.map((p) => p.symbol),
+  );
+  const decisions: Array<{ symbol: string; bias: string; score: number; allPass: boolean }> = [];
+  const market = await getMarketStatus(); // shared across all tenants, cached 60s
+
+  let slotsLeft = cfg.maxConcurrentPositions - openCount;
+  let availableLeft = balance.availableUsdt; // decremented as we allocate this tick
+  const marginUsd = Number(cfg.marginPerTradeUsd);
+  // Rank highest-confidence setups first so the best ones win the open slots.
+  const ranked: Array<{ symbol: string; bias: 'long' | 'short'; entryPrice: number; score: number }> = [];
+  for (const symbol of symbols) {
+    if (heldSymbols.has(symbol)) continue; // never stack the same coin
+    const decision = await evaluateSymbol(symbol, cfg, market);
+    decisions.push({ symbol, bias: decision.bias, score: decision.score, allPass: decision.allPass });
+    if (decision.allPass && decision.entryPrice) {
+      ranked.push({ symbol, bias: decision.bias as 'long' | 'short', entryPrice: decision.entryPrice, score: decision.score });
+    }
+  }
+  ranked.sort((a, b) => b.score - a.score);
+  for (const r of ranked) {
+    if (slotsLeft <= 0) break;
+    const opened = await openPosition(userId, client, cfg, r.symbol, r.bias, r.entryPrice, r.score, availableLeft);
+    if (opened) { slotsLeft--; availableLeft -= marginUsd; }
+  }
+
+  await prisma.botConfig.update({ where: { userId }, data: { lastTickAt: new Date() } });
+  realtime.publish(`user:${userId}:signals`, { decisions, at: Date.now() });
+}
+
+/** Build the full strategy context for one symbol and score it. */
+async function evaluateSymbol(symbol: string, cfg: BotConfig, market: MarketStatus) {
+  const candles = await BinanceClient.klines(symbol, TIMEFRAME, 250);
+  if (candles.length < 60) return { bias: 'none', score: 0, allPass: false, entryPrice: 0 };
+  const closes = candles.map((c) => c.close);
+  const price = closes[closes.length - 1]!;
+  const ema8 = calcEMA(closes, 8);
+  const vwap = calcVWAP(candles);
+  const rsi3 = calcRSI(closes, 3);
+
+  // multi-TF agreement
+  const tfBiases = await Promise.all(MULTI_TFS.map(async (tf) => {
+    const c = await BinanceClient.klines(symbol, tf, 100);
+    return computeBiasOnTf(c);
+  }));
+  const baseDir = price > vwap && price > ema8 ? 'long' : price < vwap && price < ema8 ? 'short' : 'none';
+  const agree = tfBiases.filter((b) => b === baseDir).length;
+
+  const atr = calcATR(candles, 14);
+  const funding = await BinanceClient.funding(symbol).catch(() => 0);
+
+  const ctx: StrategyCtx = {
+    ema20: calcEMA(closes, 20),
+    ema50: calcEMA(closes, 50),
+    ema200: closes.length >= 200 ? calcEMA(closes, 200) : undefined,
+    ema50Slope: emaSlope(closes, 50),
+    atrPct: atr / price,
+    volRatio: candles[candles.length - 1]!.volume / (avgVolume(candles, 20) || 1),
+    macd: calcMACD(closes),
+    adx: calcADX(candles, 14),
+    pattern: detectCandlePattern(candles),
+    swingLevels: findSwingLevels(candles, 50),
+    funding,
+    multiTfAgree: { dir: baseDir as 'long' | 'short' | 'none', passed: agree, total: MULTI_TFS.length },
+    marketStructure: detectMarketStructure(candles),
+    // shared market context → drives the critical gates
+    btcTrend: symbol === 'BTCUSDT' ? undefined : market.btcTrend,
+    marketVerdict: market.verdict,
+    fearGreed: { value: market.fearGreed.value },
+    toggles: {
+      adx: cfg.useAdxFilter, ema: cfg.useEmaTrend, rsi: cfg.useRsi,
+      volume: cfg.useVolume, atr: cfg.useAtr,
+    },
+  };
+
+  const result = runSafetyCheck(price, ema8, vwap, rsi3, ctx, cfg.scoreThreshold);
+  return { ...result, entryPrice: price };
+}
+
+/** Size in USD → coin qty, set leverage, place market order, persist position. */
+async function openPosition(
+  userId: string, client: BinanceClient, cfg: BotConfig,
+  symbol: string, bias: 'long' | 'short', entryPrice: number, score: number,
+  availableUsdt: number,
+): Promise<boolean> {
+  const marginUsd = Number(cfg.marginPerTradeUsd);
+
+  // Section 5 — R:R floor. With the profit ladder the trade rides to +5% against
+  // a ~1% risk (≈1:5); without it we use the configured tpRR. Reject < 1:3.
+  const effRR = (cfg.useTrailingStop || cfg.useBreakEven)
+    ? TAKE_PROFIT_CAP / (Number(cfg.slPercent) / 100)
+    : Number(cfg.tpRR);
+  if (effRR < MIN_RISK_REWARD) {
+    await notify(userId, 'Signal rejected', `${symbol}: R:R 1:${effRR.toFixed(1)} is below the 1:${MIN_RISK_REWARD} minimum.`);
+    return false;
+  }
+
+  // Section 4 — pre-flight wallet balance (5% buffer for fees/slippage).
+  if (availableUsdt < marginUsd * 1.05) {
+    await notify(userId, '⚠ Insufficient balance',
+      `Trade conditions satisfied for ${symbol}, but insufficient wallet balance available for execution (need ~$${(marginUsd * 1.05).toFixed(2)}, have $${availableUsdt.toFixed(2)}).`);
+    return false;
+  }
+
+  const notional = marginUsd * cfg.leverage;
+  if (notional < 5) return false; // Binance min-notional safety
+  const qty = roundQty(notional / entryPrice);
+  if (qty <= 0) return false;
+
+  try {
+    let orderId: number | undefined;
+    if (cfg.paperTrading) {
+      orderId = undefined; // simulated — no real order
+    } else {
+      await client.setLeverage(symbol, cfg.leverage);
+      const side = bias === 'long' ? 'BUY' : 'SELL';
+      const order = await client.marketOrder(symbol, side, qty) as { orderId?: number };
+      orderId = order.orderId;
+    }
+
+    const slPercent = Number(cfg.slPercent) / 100;
+    const stopLoss = bias === 'long' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
+    const tpPercent = slPercent * Number(cfg.tpRR);
+    const takeProfit = bias === 'long' ? entryPrice * (1 + tpPercent) : entryPrice * (1 - tpPercent);
+
+    await prisma.position.create({
+      data: {
+        userId, symbol, side: bias === 'long' ? 'LONG' : 'SHORT', status: 'OPEN',
+        entryPrice, markPrice: entryPrice, quantity: qty, leverage: cfg.leverage,
+        marginUsd, stopLoss, takeProfit, entryScore: score, entryBias: bias,
+        binanceOrderId: orderId ? String(orderId) : null,
+      },
+    });
+    await prisma.botConfig.update({ where: { userId }, data: { tradesToday: { increment: 1 } } });
+    await billingService.recordTradeOpened(userId); // monthly usage meter (150 incl. + $0.10 overage)
+    realtime.publish(`user:${userId}:positions`, { event: 'OPEN', symbol, side: bias, entryPrice });
+    const tag = cfg.paperTrading ? ' [PAPER]' : '';
+    await notify(userId, `Position opened${tag}`, `${bias.toUpperCase()} ${symbol} @ ${entryPrice} (score ${score})`);
+    return true;
+  } catch (e) {
+    logger.error({ userId, symbol, e }, 'openPosition failed');
+    return false;
+  }
+}
+
+/**
+ * Software watchdog (per the original project): exchange-side stops are rejected
+ * (-4120) on keys without Algo-Order permission, so we enforce break-even,
+ * trailing and hard SL/TP here with reduceOnly market closes.
+ */
+async function runWatchdog(
+  userId: string, client: BinanceClient, cfg: BotConfig,
+  positions: Awaited<ReturnType<BinanceClient['getPositions']>>,
+): Promise<void> {
+  const open = await prisma.position.findMany({ where: { userId, status: 'OPEN' } });
+  const live = new Map(positions.map((p) => [p.symbol, p]));
+
+  for (const pos of open) {
+    const ex = live.get(pos.symbol);
+    if (!ex) { // closed on exchange (manual/liquidation) — reconcile
+      await closePosition(userId, cfg, pos, Number(pos.markPrice ?? pos.entryPrice), 'EXTERNAL');
+      continue;
+    }
+    const mark = ex.markPrice;
+    const long = pos.side === 'LONG';
+    const prot = evaluateProtection(pos, mark, cfg);
+
+    if (prot.close) {
+      try {
+        await client.marketOrder(pos.symbol, long ? 'SELL' : 'BUY', Number(pos.quantity), true);
+      } catch (e) { logger.error({ e, pos: pos.id }, 'watchdog close failed'); continue; }
+      await closePosition(userId, cfg, pos, mark, prot.reason);
+    } else if (prot.newStopLoss != null) {
+      await prisma.position.update({
+        where: { id: pos.id },
+        data: { stopLoss: prot.newStopLoss, markPrice: mark, unrealizedPnl: ex.unRealizedProfit,
+                breakEvenArmed: true, trailingArmed: true },
+      });
+      await notify(userId, '🔒 Profit lock updated',
+        `${pos.symbol} stop → ${prot.newStopLoss.toFixed(6)} (securing +${((prot.lockPct ?? 0) * 100).toFixed(1)}%)`);
+    } else {
+      await prisma.position.update({ where: { id: pos.id }, data: { markPrice: mark, unrealizedPnl: ex.unRealizedProfit } });
+    }
+  }
+}
+
+/**
+ * PAPER watchdog: same break-even / trailing / SL-TP logic as the live one, but
+ * mark price comes from public market data (no exchange position to read) and we
+ * never place a real reduceOnly close — the position is simulated end-to-end.
+ */
+async function runPaperWatchdog(userId: string, cfg: BotConfig): Promise<void> {
+  const open = await prisma.position.findMany({ where: { userId, status: 'OPEN' } });
+  for (const pos of open) {
+    const candles = await BinanceClient.klines(pos.symbol, '1m', 2).catch(() => [] as Candle[]);
+    const mark = candles[candles.length - 1]?.close ?? Number(pos.markPrice ?? pos.entryPrice);
+    const prot = evaluateProtection(pos, mark, cfg);
+    if (prot.close) {
+      await closePosition(userId, cfg, pos, mark, prot.reason);
+    } else if (prot.newStopLoss != null) {
+      await prisma.position.update({
+        where: { id: pos.id },
+        data: { stopLoss: prot.newStopLoss, markPrice: mark, breakEvenArmed: true, trailingArmed: true },
+      });
+      await notify(userId, '🔒 Profit lock updated [PAPER]',
+        `${pos.symbol} stop → ${prot.newStopLoss.toFixed(6)} (securing +${((prot.lockPct ?? 0) * 100).toFixed(1)}%)`);
+    } else {
+      await prisma.position.update({ where: { id: pos.id }, data: { markPrice: mark } });
+    }
+  }
+}
+
+/** Finalize a position: write trade history, accrue platform fee, update streaks. */
+async function closePosition(
+  userId: string, cfg: BotConfig,
+  pos: { id: string; symbol: string; side: string; entryPrice: unknown; quantity: unknown;
+         leverage: number; marginUsd: unknown; openedAt: Date; entryScore: number | null },
+  exitPrice: number, reason: string,
+): Promise<void> {
+  const entry = Number(pos.entryPrice);
+  const qty = Number(pos.quantity);
+  const long = pos.side === 'LONG';
+  const grossPnl = (long ? exitPrice - entry : entry - exitPrice) * qty;
+
+  const trade = await prisma.$transaction(async (tx) => {
+    await tx.position.update({
+      where: { id: pos.id },
+      data: { status: 'CLOSED', exitPrice, realizedPnl: grossPnl, closedAt: new Date() },
+    });
+    const t = await tx.tradeHistory.create({
+      data: {
+        userId, symbol: pos.symbol, side: long ? 'LONG' : 'SHORT',
+        entryPrice: entry, exitPrice, quantity: qty, leverage: pos.leverage,
+        grossPnl, netPnl: grossPnl, // no platform cut — user keeps 100% of trading P&L
+        exitReason: reason, openedAt: pos.openedAt,
+        durationSec: Math.round((Date.now() - pos.openedAt.getTime()) / 1000),
+      },
+    });
+    const win = grossPnl > 0;
+    await tx.botConfig.update({
+      where: { userId },
+      data: win ? { consecutiveLosses: 0 } : { consecutiveLosses: { increment: 1 } },
+    });
+    // Track the user's lifetime trading P&L (their money — platform takes no cut).
+    await tx.wallet.update({ where: { userId }, data: { lifetimeProfit: { increment: grossPnl } } });
+    return t;
+  });
+  void trade; void cfg;
+
+  realtime.publish(`user:${userId}:positions`, { event: 'CLOSE', symbol: pos.symbol, pnl: grossPnl, reason });
+  realtime.publish(`user:${userId}:pnl`, { realized: grossPnl });
+  const tag = cfg.paperTrading ? ' [PAPER]' : '';
+  const title = reason === 'TP' ? '🎯 Take profit hit'
+    : reason === 'TRAIL' ? '📈 Trailing stop — profit secured'
+    : reason === 'SL' ? '🛑 Stop loss hit'
+    : reason === 'EXTERNAL' ? 'Position closed (external)'
+    : grossPnl >= 0 ? 'Trade won' : 'Trade lost';
+  await notify(userId, `${title}${tag}`,
+    `${pos.symbol} closed (${reason}): ${grossPnl >= 0 ? '+' : ''}${grossPnl.toFixed(4)} USDT`);
+}
+
+async function pauseWithError(userId: string, reason: string) {
+  await prisma.botConfig.update({ where: { userId }, data: { status: 'ERROR', pausedReason: reason } });
+  await notify(userId, 'Bot paused', reason);
+}
+
+async function notify(userId: string, title: string, body: string) {
+  await prisma.notification.create({ data: { userId, title, body } }).catch(() => {});
+  realtime.publish(`user:${userId}:botlog`, { title, body, at: Date.now() });
+  // Fire-and-forget Telegram to the user's OWN bot (no-op if not configured).
+  void sendUserTelegram(userId, `<b>${title}</b>\n${body}`);
+}
+
+// crude qty rounding; replace with per-symbol stepSize from exchangeInfo in prod
+function roundQty(q: number): number { return Math.floor(q * 1e3) / 1e3; }
