@@ -305,6 +305,11 @@ model BotConfig {
   useAtr                 Boolean     @default(true)
   useBreakEven           Boolean     @default(true)
   useTrailingStop        Boolean     @default(true)
+  // Adaptive learning (opt-in, default OFF): when on, the engine tunes the score
+  // threshold PER COIN from this user's own closed-trade history — raising the bar
+  // (or pausing) coins that lose, slightly relaxing it for coins with a proven win
+  // record. Never touches leverage, size, or the critical safety gates.
+  useAdaptiveLearning    Boolean     @default(false)
   // Runtime bookkeeping
   consecutiveLosses      Int         @default(0)
   tradesToday            Int         @default(0)

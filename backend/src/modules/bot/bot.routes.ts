@@ -6,6 +6,7 @@ import { asyncHandler } from '../../middleware/error.js';
 import { authenticate, type AuthedRequest } from '../../middleware/auth.js';
 import { ok, Errors } from '../../lib/http.js';
 import { billingService } from '../fees/billing.service.js';
+import { learningOverview } from './learning.service.js';
 
 export const botRouter = Router();
 botRouter.use(authenticate);
@@ -88,6 +89,7 @@ const configSchema = z.object({
   useAtr: z.boolean().optional(),
   useBreakEven: z.boolean().optional(),
   useTrailingStop: z.boolean().optional(),
+  useAdaptiveLearning: z.boolean().optional(),
 });
 
 botRouter.patch('/config', asyncHandler(async (req, res) => {
@@ -102,6 +104,14 @@ botRouter.patch('/config', asyncHandler(async (req, res) => {
   const cfg = await prisma.botConfig.update({ where: { userId }, data: patch });
   await prisma.auditLog.create({ data: { userId, action: 'BOT_CONFIG_CHANGE', metadata: patch } });
   return ok(res, cfg);
+}));
+
+/** GET /api/bot/learning — per-coin adaptive-learning breakdown for THIS user. */
+botRouter.get('/learning', asyncHandler(async (req, res) => {
+  const cfg = await prisma.botConfig.findUnique({ where: { userId: uid(req) } });
+  if (!cfg) throw Errors.notFound('No bot config');
+  const overview = await learningOverview(uid(req), cfg.scoreThreshold);
+  return ok(res, { enabled: cfg.useAdaptiveLearning, ...overview });
 }));
 
 /** GET /api/bot/log — recent bot activity (notifications channel). */

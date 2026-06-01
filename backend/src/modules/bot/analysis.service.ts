@@ -6,6 +6,7 @@ import {
   detectCandlePattern, findSwingLevels, detectMarketStructure, computeBiasOnTf,
 } from './indicators.js';
 import { runSafetyCheck, type StrategyCtx } from './strategy.js';
+import { effectiveThreshold } from './learning.service.js';
 
 /**
  * Deterministic "AI" analysis — ported from the dashboard's rule-based engine.
@@ -223,7 +224,11 @@ export async function signalBreakdown(symbol: string, cfg: BotConfig | null, mar
       volume: cfg?.useVolume ?? true, atr: cfg?.useAtr ?? true,
     },
   };
-  const r = runSafetyCheck(price, ema8, vwap, rsi3, ctx, cfg?.scoreThreshold ?? 85);
+  const base = cfg?.scoreThreshold ?? 85;
+  const threshold = cfg?.useAdaptiveLearning
+    ? await effectiveThreshold(cfg.userId, base, symbol)
+    : base;
+  const r = runSafetyCheck(price, ema8, vwap, rsi3, ctx, threshold);
   return {
     bias: r.bias, score: r.score, threshold: r.threshold, allPass: r.allPass,
     earnedWeight: r.earnedWeight, totalWeight: r.totalWeight,

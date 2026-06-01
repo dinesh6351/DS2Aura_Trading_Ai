@@ -13,6 +13,7 @@ import {
   detectCandlePattern, findSwingLevels, detectMarketStructure, computeBiasOnTf,
 } from './indicators.js';
 import { runSafetyCheck, type StrategyCtx } from './strategy.js';
+import { effectiveThreshold, bustLearningCache } from './learning.service.js';
 
 const TIMEFRAME = '1m';
 const MULTI_TFS = ['5m', '15m', '1h'];
@@ -206,7 +207,12 @@ async function evaluateSymbol(symbol: string, cfg: BotConfig, market: MarketStat
     },
   };
 
-  const result = runSafetyCheck(price, ema8, vwap, rsi3, ctx, cfg.scoreThreshold);
+  // Adaptive learning (opt-in): tune the quality bar for THIS coin from the
+  // user's own closed-trade record. A blocked coin gets a 101 bar it can't clear.
+  const threshold = cfg.useAdaptiveLearning
+    ? await effectiveThreshold(cfg.userId, cfg.scoreThreshold, symbol)
+    : cfg.scoreThreshold;
+  const result = runSafetyCheck(price, ema8, vwap, rsi3, ctx, threshold);
   return { ...result, entryPrice: price };
 }
 
@@ -379,6 +385,9 @@ async function closePosition(
     return t;
   });
   void trade; void cfg;
+
+  // Let adaptive learning see this outcome on the next tick (no-op if disabled).
+  bustLearningCache(userId);
 
   realtime.publish(`user:${userId}:positions`, { event: 'CLOSE', symbol: pos.symbol, pnl: grossPnl, reason });
   realtime.publish(`user:${userId}:pnl`, { realized: grossPnl });

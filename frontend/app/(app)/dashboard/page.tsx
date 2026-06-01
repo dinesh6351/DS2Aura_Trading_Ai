@@ -17,6 +17,7 @@ interface BotCfg {
   dynamicSizing?: boolean; marginGuardPct?: number; consecutiveLosses?: number;
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean;
   useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean; pausedReason: string | null;
+  useAdaptiveLearning?: boolean;
 }
 interface Position { id: string; symbol: string; side: string; entryPrice: string; markPrice: string; quantity: string; leverage: number; stopLoss: string | null; takeProfit: string | null; unrealizedPnl: string; entryScore: number | null; }
 interface SignalRow {
@@ -60,6 +61,11 @@ interface Intel {
   marketIntel: { sentiment: string; btcTrend: string; verdict: string; fundingPct: number; whaleProxy: string; headlines: string[]; note: string };
 }
 interface Trip { id: string; side: string; entry: number; exit: number; netPnl: number; grossPnl: number; rr: number | null; durationSec: number | null; exitReason: string | null; openedAt: string; closedAt: string; analysis: string; }
+interface LearningCoin { symbol: string; trades: number; winRate: number; netPnl: number; blocked: boolean; threshold: number | null; delta: number | null; note: string; }
+interface LearningOverview {
+  enabled: boolean; baseThreshold: number; coinsLearned: number;
+  raised: number; lowered: number; blocked: number; minSamples: number; coins: LearningCoin[];
+}
 
 const num = (v: unknown) => Number(v ?? 0);
 const DAY = 864e5;
@@ -177,6 +183,9 @@ export default function Dashboard() {
 
         {usage && <UsageMeter u={usage} onSubscribe={subscribe} />}
 
+        {/* What is this bot? — collapsible explainer for new users */}
+        <BotExplainer bot={bot} />
+
         {/* Portfolio stat cards */}
         <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card label="Portfolio Value" value={fmt(account?.totalBalance)} />
@@ -222,6 +231,9 @@ export default function Dashboard() {
 
         {/* AI & Strategy Intelligence (regime, active strategy, F&G, learning, news) */}
         <IntelSection intel={intel} />
+
+        {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
+        <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
 
         {/* Market status + Next trade + Equity curve */}
         <section className="grid md:grid-cols-3 gap-6">
@@ -980,6 +992,97 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 function Empty({ children }: { children: React.ReactNode }) { return <p className="text-muted text-sm py-6 text-center">{children}</p>; }
 function fmt(n?: number) { return n == null ? '…' : `$${n.toFixed(2)}`; }
 
+/**
+ * "What is this bot?" — a plain-English explainer for new users. Collapsible so
+ * it stays out of the way once you know how it works. Purely informational.
+ */
+function BotExplainer({ bot }: { bot?: BotCfg }) {
+  const learning = bot?.useAdaptiveLearning;
+  const points: { icon: string; title: string; body: string }[] = [
+    { icon: '🤖', title: 'What it is',
+      body: 'An automated trading assistant for your own Binance USDT-M Futures account. Every ~60 seconds it checks your watchlist and trades only high-quality setups for you — using your own encrypted API keys, fully isolated from other users.' },
+    { icon: '🎯', title: 'How it picks a trade',
+      body: 'It scores each coin 0–100 on a 19-point checklist (trend, EMA alignment, RSI pullback, MACD, volume, ADX, multi-timeframe agreement, market structure, patterns…). A trade opens only when there is a clear direction, the score is ≥ your threshold, AND every safety gate passes.' },
+    { icon: '🛡️', title: 'Safety gates (all must pass)',
+      body: 'Spread not too wide · market not HIGH_RISK · funding not extreme · BTC trend aligned with the trade · ADX shows a real trend (not chop). If any fails, the bot stands aside — no trade.' },
+    { icon: '🧠', title: 'AI strategy selector',
+      body: 'It reads the live market “regime” (trending / ranging / volatile / weak) and picks the strategy family best suited to it, with a confidence % and a reason. It is deterministic and explainable — not a black-box.' },
+    { icon: '📉', title: 'It protects every trade',
+      body: 'Automatic stop-loss, take-profit, break-even and a trailing profit-lock ladder (the stop ratchets up as profit grows, never back; closes at +5%). Enforced in software so it works even on basic API keys.' },
+    { icon: learning ? '🧪' : '⚙️', title: learning ? 'Adaptive learning: ON' : 'Rule-based (learning off)',
+      body: learning
+        ? 'Adaptive learning is enabled: the bot raises the quality bar for coins that have lost for you (or pauses them), and slightly relaxes it for coins with a proven win record — learning from YOUR closed-trade history. It never changes leverage, size, or the safety gates.'
+        : 'By default the rules are fixed — the bot does not learn from past trades. Turn on “Adaptive learning” in Bot Settings to let it tune the quality bar per coin from your own results.' },
+  ];
+  return (
+    <details className="card group">
+      <summary className="cursor-pointer flex items-center justify-between list-none">
+        <span className="label">ℹ️ What is this bot &amp; how does it work?</span>
+        <span className="text-muted text-xs group-open:hidden">▼ show</span>
+        <span className="text-muted text-xs hidden group-open:inline">▲ hide</span>
+      </summary>
+      <div className="grid md:grid-cols-2 gap-3 mt-3">
+        {points.map((p, i) => (
+          <div key={i} className="bg-bg rounded p-3 border border-green-900/30">
+            <p className="text-sm font-bold text-green-100"><span className="mr-1">{p.icon}</span>{p.title}</p>
+            <p className="text-muted text-xs mt-1 leading-relaxed">{p.body}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-muted text-[11px] mt-3 italic">
+        Tip: new accounts start in <b>Paper</b> mode — the bot simulates trades on live prices with no real orders, so you can watch it work risk-free before going live.
+      </p>
+    </details>
+  );
+}
+
+/**
+ * 🧪 Adaptive Learning — shows what the opt-in learning is doing per coin: how the
+ * score bar has been raised/lowered (or the coin paused) based on the user's own
+ * closed-trade record. Only fetches when learning is enabled.
+ */
+function AdaptiveLearningCard({ enabled }: { enabled?: boolean }) {
+  const [d, setD] = useState<LearningOverview>();
+  useEffect(() => {
+    if (!enabled) { setD(undefined); return; }
+    let alive = true;
+    const load = () => api.get<LearningOverview>('/api/bot/learning').then((x) => { if (alive) setD(x); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [enabled]);
+
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between mb-2">
+        <p className="label">🧪 Adaptive Learning {enabled ? <span className="badge-up text-xs">ON</span> : <span className="text-muted text-xs">off</span>}</p>
+        {d && <span className="text-muted text-xs">base bar {d.baseThreshold} · {d.coinsLearned} coin(s) learned · ↑{d.raised} pickier · ↓{d.lowered} looser · ⏸ {d.blocked} paused · ↻ 60s</span>}
+      </div>
+      {!enabled ? (
+        <Empty>Off. Turn on <b>🧪 Adaptive learning</b> in Bot Settings below to let the bot tune the quality bar per coin from your own results (it only ever makes the bot more selective — never riskier).</Empty>
+      ) : !d || d.coins.length === 0 ? (
+        <Empty>Learning is on. It needs at least {d?.minSamples ?? 5} closed trades on a coin before it adjusts that coin&apos;s bar — keep trading (Paper is fine) and adjustments will appear here.</Empty>
+      ) : (
+        <table className="w-full text-sm min-w-[640px]">
+          <thead><tr className="text-muted text-xs"><th className="text-left">Coin</th><th>Trades</th><th>Win%</th><th>Net P&L</th><th>Score bar</th><th className="text-left pl-3">What learning did</th></tr></thead>
+          <tbody>{d.coins.map((c) => (
+            <tr key={c.symbol} className="border-t border-green-900/30 align-top">
+              <td className="font-bold">{c.symbol}</td>
+              <td className="text-center">{c.trades}</td>
+              <td className="text-center">{c.winRate}%</td>
+              <td className={`text-center ${c.netPnl >= 0 ? 'badge-up' : 'badge-down'}`}>{c.netPnl >= 0 ? '+' : ''}{c.netPnl.toFixed(2)}</td>
+              <td className="text-center">
+                {c.blocked ? <span className="badge-down text-xs">⏸ PAUSED</span>
+                  : <b className={(c.delta ?? 0) > 0 ? 'text-warn' : (c.delta ?? 0) < 0 ? 'text-accent' : ''}>{c.threshold}{c.delta ? ` (${c.delta > 0 ? '+' : ''}${c.delta})` : ''}</b>}
+              </td>
+              <td className="text-left pl-3 text-xs text-muted">{c.note}</td>
+            </tr>))}</tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 /** Editable bot settings: mode preset + key risk config + watchlist. */
 function BotSettings({ bot, watchlist, onSaved }: { bot: BotCfg; watchlist: string[]; onSaved: () => void }) {
   const [cfg, setCfg] = useState({
@@ -1016,6 +1119,17 @@ function BotSettings({ bot, watchlist, onSaved }: { bot: BotCfg; watchlist: stri
         <Num label="Max Trades/Day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
       </div>
       <button className="btn w-full" onClick={saveCfg}>Save settings</button>
+      <label className="flex items-start gap-2 text-sm border-t border-green-900/20 pt-3">
+        <input type="checkbox" className="mt-1" checked={!!bot.useAdaptiveLearning}
+          onChange={async (e) => {
+            await api.patch('/api/bot/config', { useAdaptiveLearning: e.target.checked });
+            setNote(`Adaptive learning ${e.target.checked ? 'ON' : 'OFF'}`); onSaved(); setTimeout(() => setNote(''), 2000);
+          }} />
+        <span>
+          <b>🧪 Adaptive learning</b> <span className="text-muted text-xs">(opt-in)</span>
+          <span className="block text-muted text-xs">Tunes the score bar per coin from your own closed-trade results — pickier on losers, looser on proven winners, and pauses coins that keep losing. Never changes leverage or size. Test in Paper first.</span>
+        </span>
+      </label>
       <div>
         <p className="label mb-1">Watchlist (comma-separated)</p>
         <textarea className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
