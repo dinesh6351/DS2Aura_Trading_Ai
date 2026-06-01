@@ -7,21 +7,47 @@ import type { ApiResponse } from '@platform/shared';
  * XSS token theft); the refresh token lives in an httpOnly cookie set by the
  * backend. On a 401 we transparently call /auth/refresh once and retry.
  */
+function isLocalHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname)
+  );
+}
+
 /**
- * Resolve the API origin. An explicit NEXT_PUBLIC_API_URL always wins (prod, or
- * a custom dev setup). Otherwise, in the browser, talk to the SAME host the page
- * is served from — `http://localhost:3000` → `http://localhost:4000`,
- * `http://127.0.0.1:3000` → `http://127.0.0.1:4000`, `http://<lan-ip>:3000` →
- * `http://<lan-ip>:4000`. This keeps the refresh cookie first-party: it's set
- * `SameSite=Lax`, so if the page is on 127.0.0.1 but the API on localhost, the
- * cookie is withheld on reload and the user gets bounced to /login even though
- * login itself succeeds. Resolved per-call (not at module load) so SSR can't
- * freeze in a `localhost` value that the browser then reuses on the wrong host.
+ * Resolve the HTTP API base.
+ * - Deployed (prod): returns '' so every call is RELATIVE (same-origin). A
+ *   Next.js rewrite (next.config.mjs) proxies /api/* to the backend, which keeps
+ *   the auth refresh cookie FIRST-PARTY. The frontend and backend live on
+ *   different *.up.railway.app subdomains, so a cross-site cookie would be
+ *   blocked by the browser and log the user out on every reload.
+ * - Local dev: the backend runs on :4000 on the same host, so call it directly.
+ * Resolved per-call (not at module load) so SSR can't freeze a wrong value.
  */
 export function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== 'undefined') return `${window.location.protocol}//${window.location.hostname}:4000`;
-  return 'http://localhost:4000';
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    if (isLocalHost(hostname)) return `${protocol}//${hostname}:4000`;
+    return ''; // same-origin; proxied to the backend by next.config.mjs rewrites
+  }
+  return '';
+}
+
+/**
+ * WebSocket base for realtime. WS auth uses a token in the query string (not the
+ * cookie), so it can safely connect cross-origin straight to the backend — no
+ * proxy needed. Set NEXT_PUBLIC_WS_URL to the backend's wss:// origin to enable
+ * realtime in production; without it, realtime is simply disabled (the dashboard
+ * still loads all data over HTTP).
+ */
+function getWsBase(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    if (isLocalHost(hostname)) return `${protocol === 'https:' ? 'wss' : 'ws'}://${hostname}:4000`;
+  }
+  return '';
 }
 
 let accessToken: string | null = null;
@@ -84,8 +110,9 @@ export const api = {
 
 /** Open a realtime WS bound to the current access token, subscribe to channels. */
 export function openRealtime(channels: string[], onMessage: (m: { channel: string; payload: unknown }) => void) {
-  if (!accessToken) return () => {};
-  const ws = new WebSocket(`${getApiBase().replace(/^http/, 'ws')}/ws?token=${accessToken}`);
+  const wsBase = getWsBase();
+  if (!accessToken || !wsBase) return () => {};
+  const ws = new WebSocket(`${wsBase}/ws?token=${accessToken}`);
   ws.onopen = () => channels.forEach((c) => ws.send(JSON.stringify({ type: 'subscribe', channel: c })));
   ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch { /* ignore */ } };
   return () => ws.close();
