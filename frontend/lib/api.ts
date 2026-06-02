@@ -82,21 +82,45 @@ async function raw<T>(path: string, init: RequestInit = {}, retry = true): Promi
  * make the backend's reuse-detection revoke the session — which looks exactly
  * like "login doesn't work / I get bounced to /login on reload".
  */
-let refreshInFlight: Promise<boolean> | null = null;
+export type SessionState = 'valid' | 'none' | 'error';
+let refreshInFlight: Promise<SessionState> | null = null;
 
-function tryRefresh(): Promise<boolean> {
+/**
+ * Single-flight refresh, distinguishing three outcomes:
+ *  - 'valid' : got a fresh access token (session is good)
+ *  - 'none'  : server replied cleanly but there is no session (logged out / expired)
+ *  - 'error' : network/parse failure — AMBIGUOUS, must not be treated as logged out
+ * Concurrent callers share ONE in-flight request so the rotating refresh cookie is
+ * never spent twice (which the backend's reuse-detection would revoke).
+ */
+function doRefresh(): Promise<SessionState> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
       const res = await fetch(`${getApiBase()}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
       const body = (await res.json()) as ApiResponse<{ accessToken: string | null }>;
-      if (body.ok && body.data.accessToken) { setAccessToken(body.data.accessToken); return true; }
-    } catch { /* fall through */ }
-    return false;
+      if (body.ok && body.data.accessToken) { setAccessToken(body.data.accessToken); return 'valid'; }
+      if (body.ok) return 'none';   // ok:true but accessToken null = no valid session
+      return 'error';
+    } catch { return 'error'; }
   })();
   // Clear the cache once settled so the NEXT genuine 401 can refresh again.
   void refreshInFlight.finally(() => { refreshInFlight = null; });
   return refreshInFlight;
+}
+
+function tryRefresh(): Promise<boolean> {
+  return doRefresh().then((s) => s === 'valid');
+}
+
+/**
+ * Used by the route guard: returns 'valid' if we already hold a token (SPA nav)
+ * or the cookie refreshes; 'none' ONLY when the server confirms no session;
+ * 'error' on a transient failure (caller should stay put, not bounce home).
+ */
+export async function ensureSession(): Promise<SessionState> {
+  if (accessToken) return 'valid';
+  return doRefresh();
 }
 
 export const api = {

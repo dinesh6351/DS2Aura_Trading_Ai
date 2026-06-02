@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, ensureSession } from '@/lib/api';
 
 /**
- * Gates the authenticated app. On mount it validates the session via /api/me,
- * which transparently refreshes the access token from the httpOnly cookie. If
- * there is no valid session (logged out / expired), it bounces to the public
- * home page — so pasting /dashboard, /admin or /settings while logged out never
- * renders the app shell. `requireAdmin` additionally gates on the ADMIN role.
+ * Gates the authenticated app. It only bounces to the public home page when the
+ * server CONFIRMS there is no session (logged out / expired) — a transient
+ * network hiccup keeps you on the page, and an in-memory token (client-side
+ * navigation) passes instantly. So clicking Charts/Profile/Admin while logged in
+ * never throws you home; only a finished session does. `requireAdmin` adds an
+ * ADMIN-role check on top.
  */
 export function AuthGuard({ children, requireAdmin = false }: { children: React.ReactNode; requireAdmin?: boolean }) {
   const router = useRouter();
@@ -17,13 +18,21 @@ export function AuthGuard({ children, requireAdmin = false }: { children: React.
 
   useEffect(() => {
     let alive = true;
-    api.get<{ role: string }>('/api/me')
-      .then((me) => {
-        if (!alive) return;
-        if (requireAdmin && me.role !== 'ADMIN') { router.replace('/dashboard'); return; }
-        setState('ok');
-      })
-      .catch(() => { if (alive) router.replace('/'); });
+    (async () => {
+      const session = await ensureSession();
+      if (!alive) return;
+      if (session === 'none') { router.replace('/'); return; } // confirmed logged out → home
+      // 'valid' or 'error' (ambiguous): render the page. For admin routes verify
+      // the role, but a failed role check never bounces a valid session home.
+      if (requireAdmin) {
+        try {
+          const me = await api.get<{ role: string }>('/api/me');
+          if (!alive) return;
+          if (me.role !== 'ADMIN') { router.replace('/dashboard'); return; }
+        } catch { /* best-effort; keep the valid session on the page */ }
+      }
+      if (alive) setState('ok');
+    })();
     return () => { alive = false; };
   }, [requireAdmin, router]);
 

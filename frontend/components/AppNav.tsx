@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api, setAccessToken, getApiBase } from '@/lib/api';
 
 /** Shared top navigation for the authenticated app (dashboard, chart, admin).
@@ -18,7 +19,7 @@ export function AppNav({ active }: { active?: 'dashboard' | 'chart' | 'settings'
   async function logout() {
     await api.post('/api/auth/logout').catch(() => {});
     setAccessToken(null);
-    window.location.href = '/login';
+    window.location.href = '/'; // session finished → public home page
   }
 
   const items = [
@@ -33,14 +34,14 @@ export function AppNav({ active }: { active?: 'dashboard' | 'chart' | 'settings'
   return (
     <nav className="sticky top-0 z-30 border-b border-green-900/30 bg-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-3">
-        <a href="/dashboard" className="flex items-center gap-2 font-bold text-accent shrink-0 min-w-0">
+        <Link href="/dashboard" className="flex items-center gap-2 font-bold text-accent shrink-0 min-w-0">
           {brand?.logoUrl ? <img src={brand.logoUrl} alt="" className="h-7 w-auto rounded shrink-0" /> : <span>▚</span>}
           <span className="truncate max-w-[52vw] sm:max-w-none">{brand?.appName ?? 'DS2AuraTrading AI'}</span>
-        </a>
+        </Link>
 
         {/* Desktop nav */}
         <div className="hidden sm:flex items-center gap-1">
-          {items.map((i) => <a key={i.key} href={i.href} className={cls(i.key)}>{i.label}</a>)}
+          {items.map((i) => <Link key={i.key} href={i.href} className={cls(i.key)}>{i.label}</Link>)}
           <button onClick={logout} className="px-3 py-2 rounded text-sm whitespace-nowrap text-muted hover:text-danger transition">Logout</button>
         </div>
 
@@ -54,7 +55,7 @@ export function AppNav({ active }: { active?: 'dashboard' | 'chart' | 'settings'
       {/* Mobile dropdown menu */}
       {open && (
         <div className="sm:hidden border-t border-green-900/30 px-3 py-2 space-y-1">
-          {items.map((i) => <a key={i.key} href={i.href} className={cls(i.key, true)} onClick={() => setOpen(false)}>{i.label}</a>)}
+          {items.map((i) => <Link key={i.key} href={i.href} className={cls(i.key, true)} onClick={() => setOpen(false)}>{i.label}</Link>)}
           <button onClick={logout} className="block w-full text-left px-3 py-2 rounded text-sm text-danger hover:bg-danger/10 transition">Logout</button>
         </div>
       )}
