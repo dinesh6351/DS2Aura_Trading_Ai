@@ -356,6 +356,7 @@ model BotConfig {
   // Runtime bookkeeping
   consecutiveLosses      Int         @default(0)
   tradesToday            Int         @default(0)
+  lastDailyResetAt       DateTime?   // when tradesToday/streak were last reset (per the user's local midnight)
   lastTickAt             DateTime?
   pausedReason           String?
   createdAt              DateTime    @default(now())

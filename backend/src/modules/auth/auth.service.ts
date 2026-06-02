@@ -16,6 +16,7 @@ interface RegisterInput {
   fullName: string;
   mobile?: string;
   country?: string;
+  timezone?: string;
 }
 
 interface SessionMeta { ip?: string; userAgent?: string }
@@ -103,7 +104,7 @@ export const authService = {
           passwordHash,
           role: Role.TRADER,
           // store the email-verification token hash in metadata via a notification/audit; simplified here:
-          profile: { create: { fullName: input.fullName, mobile: input.mobile, country: input.country } },
+          profile: { create: { fullName: input.fullName, mobile: input.mobile, country: input.country, timezone: input.timezone || 'UTC' } },
           subscription: { create: {} }, // defaults to TRIAL/TRIALING; dates set by startTrial below
           wallet: { create: {} },
           botConfig: { create: {} },

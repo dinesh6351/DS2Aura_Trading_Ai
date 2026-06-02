@@ -5,6 +5,7 @@ import { isBanned } from '../binance/binance.client.js';
 import { tickUser } from './engine.js';
 import { realtime } from '../notifications/realtime.js';
 import { sendUserTelegram } from '../notifications/telegram.service.js';
+import { startOfDayUtc } from '../../lib/time.js';
 
 /**
  * Multi-tenant scheduler. Replaces the original single-process cron loop: instead
@@ -75,29 +76,44 @@ async function tickOne(userId: string) {
   }
 }
 
-/** Reset daily counters at UTC midnight (call from a cron job). */
 /**
- * New trading day: zero the per-day trade counters, reset loss streaks, and
- * auto-RESUME any bot that was paused by the consecutive-loss protector
- * (Section 6 — "resume automatically next trading day"). Manual stops/pauses are
- * left untouched.
+ * Reset daily counters at EACH USER'S local midnight (their region's timezone), not
+ * a single UTC midnight. Idempotent — call it every minute; it only resets a user
+ * once their local day has advanced past their last reset. On a new local day it
+ * zeroes tradesToday + the loss streak, and auto-RESUMES a bot that was paused by
+ * the daily-trade-limit or consecutive-loss protector (a manual STOP stays stopped).
  */
 export async function resetDailyCounters() {
-  await prisma.botConfig.updateMany({ data: { tradesToday: 0, consecutiveLosses: 0 } });
-
-  const lossPaused = await prisma.botConfig.findMany({
-    where: { status: 'ERROR', pausedReason: { contains: 'consecutive losses' } },
-    select: { userId: true },
+  const now = new Date();
+  const configs = await prisma.botConfig.findMany({
+    select: {
+      userId: true, lastDailyResetAt: true, status: true, pausedReason: true,
+      user: { select: { profile: { select: { timezone: true } } } },
+    },
   });
-  for (const c of lossPaused) {
+  let reset = 0, resumed = 0;
+  for (const c of configs) {
+    const tz = c.user.profile?.timezone || 'UTC';
+    const dayStart = startOfDayUtc(tz, now);
+    if (c.lastDailyResetAt && c.lastDailyResetAt >= dayStart) continue; // already reset this local day
+    const resume = (c.status === 'PAUSED' && (c.pausedReason ?? '').includes('Daily trade limit'))
+      || (c.status === 'ERROR' && (c.pausedReason ?? '').includes('consecutive losses'));
     await prisma.botConfig.update({
-      where: { userId: c.userId }, data: { status: 'RUNNING', pausedReason: null, consecutiveLosses: 0 },
+      where: { userId: c.userId },
+      data: {
+        tradesToday: 0, consecutiveLosses: 0, lastDailyResetAt: now,
+        ...(resume ? { status: 'RUNNING', pausedReason: null } : {}),
+      },
     });
-    const title = '▶ Bot resumed';
-    const body = 'New trading day — consecutive-loss protection reset. Auto-trading resumed.';
-    await prisma.notification.create({ data: { userId: c.userId, title, body } }).catch(() => {});
-    realtime.publish(`user:${c.userId}:botlog`, { title, body, at: Date.now() });
-    void sendUserTelegram(c.userId, `<b>${title}</b>\n${body}`);
+    reset++;
+    if (resume) {
+      resumed++;
+      const title = '▶ Bot resumed — new trading day';
+      const body = 'New trading day in your region — daily trade limit reset, auto-trading resumed.';
+      await prisma.notification.create({ data: { userId: c.userId, title, body } }).catch(() => {});
+      realtime.publish(`user:${c.userId}:botlog`, { title, body, at: Date.now() });
+      void sendUserTelegram(c.userId, `<b>${title}</b>\n${body}`);
+    }
   }
-  logger.info({ resumed: lossPaused.length }, 'daily trade counters reset');
+  if (reset) logger.info({ reset, resumed }, 'daily counters reset (per user timezone)');
 }

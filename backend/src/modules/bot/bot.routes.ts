@@ -7,6 +7,7 @@ import { authenticate, type AuthedRequest } from '../../middleware/auth.js';
 import { ok, Errors } from '../../lib/http.js';
 import { billingService } from '../fees/billing.service.js';
 import { learningOverview } from './learning.service.js';
+import { startOfDayUtc } from '../../lib/time.js';
 
 export const botRouter = Router();
 botRouter.use(authenticate);
@@ -31,8 +32,20 @@ botRouter.post('/start', asyncHandler(async (req, res) => {
   }
   const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID', canTrade: true } });
   if (!key) throw Errors.badRequest('Connect a valid Binance key with Futures permission first');
+  // If a NEW local day has begun since the last reset, clear today's trade counter so
+  // Start isn't immediately re-paused by a stale daily-limit count (same-day at the
+  // cap is left as-is, so restarting can't bypass the limit within the same day).
+  const [cur, profile] = await Promise.all([
+    prisma.botConfig.findUnique({ where: { userId }, select: { lastDailyResetAt: true } }),
+    prisma.profile.findUnique({ where: { userId }, select: { timezone: true } }),
+  ]);
+  const newDay = !cur?.lastDailyResetAt || cur.lastDailyResetAt < startOfDayUtc(profile?.timezone || 'UTC');
   const cfg = await prisma.botConfig.update({
-    where: { userId }, data: { status: 'RUNNING', pausedReason: null, consecutiveLosses: 0 },
+    where: { userId },
+    data: {
+      status: 'RUNNING', pausedReason: null, consecutiveLosses: 0,
+      ...(newDay ? { tradesToday: 0, lastDailyResetAt: new Date() } : {}),
+    },
   });
   await prisma.auditLog.create({ data: { userId, action: 'BOT_START' } });
   return ok(res, cfg);

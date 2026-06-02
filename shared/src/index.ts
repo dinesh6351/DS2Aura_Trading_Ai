@@ -180,6 +180,27 @@ export const MIN_RISK_REWARD = 3;    // reject setups below 1:3
 // so recorded P&L matches the real wallet instead of showing a thin paper win.
 export const TAKER_FEE_RATE = 0.0004;
 
+// Regions for the signup/profile timezone dropdown. `tz` is an IANA zone used to
+// compute each user's local "today" (P&L, trade count, daily reset). DST-aware.
+export const REGIONS: { tz: string; label: string }[] = [
+  { tz: 'Asia/Kolkata', label: 'India — IST (UTC+5:30)' },
+  { tz: 'UTC', label: 'UTC' },
+  { tz: 'America/New_York', label: 'US — Eastern (ET)' },
+  { tz: 'America/Chicago', label: 'US — Central (CT)' },
+  { tz: 'America/Denver', label: 'US — Mountain (MT)' },
+  { tz: 'America/Los_Angeles', label: 'US — Pacific (PT)' },
+  { tz: 'Europe/London', label: 'UK — London (GMT/BST)' },
+  { tz: 'Europe/Paris', label: 'Europe — Central (CET)' },
+  { tz: 'Asia/Dubai', label: 'UAE — Dubai (UTC+4)' },
+  { tz: 'Asia/Singapore', label: 'Singapore (UTC+8)' },
+  { tz: 'Asia/Shanghai', label: 'China (UTC+8)' },
+  { tz: 'Asia/Tokyo', label: 'Japan — Tokyo (UTC+9)' },
+  { tz: 'Australia/Sydney', label: 'Australia — Sydney (AET)' },
+];
+export const REGION_TZS = new Set(REGIONS.map((r) => r.tz));
+export const regionLabel = (tz?: string | null): string =>
+  REGIONS.find((r) => r.tz === tz)?.label ?? (tz || 'UTC');
+
 // ---------------------------------------------------------------------------
 // API envelope
 // ---------------------------------------------------------------------------

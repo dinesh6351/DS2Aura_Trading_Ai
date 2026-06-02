@@ -32,6 +32,7 @@ const registerSchema = z.object({
   fullName: z.string().min(1).max(120),
   mobile: z.string().max(20).optional(),
   country: z.string().max(60).optional(),
+  timezone: z.string().max(40).optional(),
 });
 
 authRouter.post('/register', authLimiter, asyncHandler(async (req, res) => {

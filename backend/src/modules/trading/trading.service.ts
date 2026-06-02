@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma.js';
 import { BinanceClient, isBanned } from '../binance/binance.client.js';
 import { apiKeyService } from '../apikeys/apikeys.service.js';
 import { logger } from '../../lib/logger.js';
+import { startOfDayUtc } from '../../lib/time.js';
 
 /**
  * On-demand LIVE account snapshot, independent of the bot's run state. The bot
@@ -193,23 +194,29 @@ export const tradingService = {
   },
 
   async stats(userId: string) {
-    const trades = await prisma.tradeHistory.findMany({ where: { userId } });
+    const [trades, profile, cfg, acct] = await Promise.all([
+      prisma.tradeHistory.findMany({ where: { userId } }),
+      prisma.profile.findUnique({ where: { userId }, select: { timezone: true } }),
+      prisma.botConfig.findUnique({ where: { userId }, select: { lastDailyResetAt: true } }),
+      prisma.tradingAccount.findFirst({ where: { userId } }),
+    ]);
+    const tz = profile?.timezone || 'UTC';
     const wins = trades.filter((t) => Number(t.grossPnl) > 0).length;
     const realized = trades.reduce((s, t) => s + Number(t.netPnl), 0);
     const now = Date.now();
-    const since = (days: number) => now - days * 864e5;
     const sum = (from: number) => trades.filter((t) => t.closedAt.getTime() >= from)
       .reduce((s, t) => s + Number(t.netPnl), 0);
-    const acct = await prisma.tradingAccount.findFirst({ where: { userId } });
     const equity = Number(acct?.totalBalance ?? 0);
     return {
       totalTrades: trades.length,
       winRate: trades.length ? +(wins / trades.length * 100).toFixed(1) : 0,
       realizedPnl: +realized.toFixed(4),
-      todayProfit: +sum(since(1)).toFixed(4),
-      weeklyProfit: +sum(since(7)).toFixed(4),
-      monthlyProfit: +sum(since(30)).toFixed(4),
+      todayProfit: +sum(startOfDayUtc(tz).getTime()).toFixed(4), // calendar TODAY in the user's region
+      weeklyProfit: +sum(now - 7 * 864e5).toFixed(4),
+      monthlyProfit: +sum(now - 30 * 864e5).toFixed(4),
       roi: equity > 0 ? +((realized / equity) * 100).toFixed(2) : 0,
+      timezone: tz,
+      lastResetAt: cfg?.lastDailyResetAt ?? null,
     };
   },
 

@@ -21,14 +21,11 @@ export function startWorkers() {
   // enforcement, so duplicates are detectable. Fire-and-forget, idempotent.
   void apiKeyService.backfillKeyFingerprints().catch((e) => logger.error({ e }, 'api-key fingerprint backfill failed'));
 
-  // lightweight midnight scheduler (checks each minute; fine at this scale)
-  let lastDay = new Date().getUTCDate();
+  // Clear stale daily counters right now (per each user's local day), then keep
+  // checking every minute — each user resets at THEIR local midnight, not UTC.
+  void resetDailyCounters().catch((e) => logger.error({ e }, 'initial daily reset failed'));
   setInterval(async () => {
-    const now = new Date();
-    if (now.getUTCDate() !== lastDay && now.getUTCHours() === 0) {
-      lastDay = now.getUTCDate();
-      await resetDailyCounters();
-    }
+    await resetDailyCounters();
     await runBillingCycle(); // also catches per-minute any period that just ended
   }, 60_000);
 

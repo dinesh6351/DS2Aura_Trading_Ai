@@ -5,11 +5,11 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { api, openRealtime, getApiBase } from '@/lib/api';
-import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE } from '@platform/shared';
+import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE, regionLabel } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
 
 interface Account { totalBalance: number; availableBalance: number; marginUsed: number; unrealizedPnl: number; openPositions: number; lastSyncedAt: string | null; live?: boolean; }
-interface Stats { winRate: number; realizedPnl: number; todayProfit: number; weeklyProfit: number; monthlyProfit: number; roi: number; totalTrades: number; }
+interface Stats { winRate: number; realizedPnl: number; todayProfit: number; weeklyProfit: number; monthlyProfit: number; roi: number; totalTrades: number; timezone?: string; lastResetAt?: string | null; }
 interface BotCfg {
   status: string; mode: string; scoreThreshold: number; leverage: number;
   marginPerTradeUsd: string; slPercent: string; tpRR: string; trailArmPct?: string; trailGapPct?: string;
@@ -172,6 +172,7 @@ export default function Dashboard() {
             <span className="text-xs flex items-center gap-1">
               <span className={account?.live ? 'badge-up animate-pulse' : 'text-warn'}>{account?.live ? '● LIVE' : '○ cached'}</span>
               <span className="text-muted">· auto 20s · updated <Ago at={lastLoad} /></span>
+              {stats?.timezone && <span className="text-muted">· 🌐 {regionLabel(stats.timezone)}{stats.lastResetAt ? ` · day reset ${new Date(stats.lastResetAt).toLocaleString()}` : ''}</span>}
             </span>
           </div>
           <div className="flex items-center gap-2">

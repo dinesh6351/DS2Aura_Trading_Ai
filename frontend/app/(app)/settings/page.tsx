@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { TradingMode } from '@platform/shared';
+import { TradingMode, REGIONS } from '@platform/shared';
 import { api } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
 
@@ -135,7 +135,7 @@ function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
         <label className="block"><span className="label">Full name</span><input className={inp} value={form.fullName} onChange={set('fullName')} placeholder="Your name" /></label>
         <label className="block"><span className="label">Mobile</span><input className={inp} value={form.mobile} onChange={set('mobile')} placeholder="+91 …" /></label>
         <label className="block"><span className="label">Country</span><input className={inp} value={form.country} onChange={set('country')} placeholder="Country" /></label>
-        <label className="block"><span className="label">Timezone</span><input className={inp} value={form.timezone} onChange={set('timezone')} placeholder="UTC" /></label>
+        <label className="block"><span className="label">Region / timezone</span><select className={inp} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })}>{REGIONS.map((r) => <option key={r.tz} value={r.tz}>{r.label}</option>)}</select></label>
       </div>
       <button className="btn w-full" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save profile'}</button>
       {note && <p className="text-accent text-sm">{note}</p>}
