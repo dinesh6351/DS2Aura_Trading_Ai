@@ -163,11 +163,10 @@ export const MODE_PRESETS: Record<TradingMode, {
  * exact same numbers. Initial stop = the user's slPercent (e.g. -1%).
  */
 export const PROFIT_LADDER: { trigger: number; lock: number }[] = [
-  { trigger: 0.003, lock: 0.0012 }, // +0.3% → lock +0.12% — break-even+: once a trade
-                                     // is genuinely green (clears the ~0.08% round-trip
-                                     // taker fee) the stop snaps above entry, so a winning
-                                     // trade can no longer fall back to the full -1% stop.
-  { trigger: 0.005, lock: 0.002 }, // +0.5% → lock +0.2%
+  // Professional trail: arm at +0.5% locking just above break-even (clears the
+  // ~0.08% round-trip fee), then trail ~0.5% behind as the move runs — wide
+  // enough that normal noise doesn't stop you out, tight enough to bank gains.
+  { trigger: 0.005, lock: 0.001 }, // +0.5% → lock +0.1%  (break-even+ — past here the trade can't turn into a loss; 0.4% room)
   { trigger: 0.010, lock: 0.005 }, // +1.0% → lock +0.5%
   { trigger: 0.015, lock: 0.010 }, // +1.5% → lock +1.0%
   { trigger: 0.020, lock: 0.015 }, // +2.0% → lock +1.5%
