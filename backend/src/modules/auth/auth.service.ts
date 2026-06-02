@@ -1,4 +1,5 @@
 import argon2 from 'argon2';
+import nodemailer from 'nodemailer';
 import * as OTPAuth from 'otpauth';
 import { Role, SubscriptionStatus, SubscriptionPlan, type AuthTokens } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
@@ -53,15 +54,37 @@ async function issueTokens(
 const _emailOtp = new Map<string, { hash: string; expires: number; attempts: number; sentAt: number }>();
 const OTP_TTL_MS = 10 * 60_000;
 
+// Lazily-built SMTP transport (nodemailer). Configured from SMTP_URL, e.g.
+// smtps://user:pass@smtp.gmail.com:465 or smtp://user:pass@host:587.
+let _transport: nodemailer.Transporter | null | undefined;
+function mailTransport(): nodemailer.Transporter | null {
+  if (_transport === undefined) {
+    _transport = env.SMTP_URL ? nodemailer.createTransport(env.SMTP_URL) : null;
+    if (!_transport) logger.warn('SMTP_URL not set — email OTP will be shown on-screen instead of emailed');
+  }
+  return _transport;
+}
+
 /**
- * Deliver the OTP. No mailer is wired yet, so this logs the code and reports
- * "not delivered" → the API returns the code to the user so they can verify now.
- * When a real mailer (nodemailer + SMTP_URL, or an email API) is added here and it
- * sends successfully, return true and the code stops being exposed.
+ * Deliver the OTP by email. Returns true if it was actually sent (then the code is
+ * NOT exposed to the client). If SMTP isn't configured or sending fails, returns
+ * false and the API hands the code back so the user can still verify (dev/fallback).
  */
 async function sendEmailOtp(email: string, code: string): Promise<boolean> {
-  logger.info({ email, code }, 'EMAIL OTP (delivery not configured — code shown to user)');
-  return false;
+  const t = mailTransport();
+  if (!t) { logger.info({ email, code }, 'EMAIL OTP (no SMTP — code shown to user)'); return false; }
+  try {
+    await t.sendMail({
+      from: env.EMAIL_FROM || 'DS2AuraTrading <no-reply@ds2aura.trade>',
+      to: email,
+      subject: 'Your DS2AuraTrading verification code',
+      text: `Your verification code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this email.`,
+      html: `<p>Your DS2AuraTrading verification code is:</p>`
+        + `<p style="font-size:24px;font-weight:bold;letter-spacing:3px">${code}</p>`
+        + `<p style="color:#888">It expires in 10 minutes. If you didn't request this, you can ignore this email.</p>`,
+    });
+    return true;
+  } catch (e) { logger.error({ e, email }, 'email OTP send failed — falling back to on-screen code'); return false; }
 }
 
 export const authService = {
