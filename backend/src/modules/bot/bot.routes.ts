@@ -77,6 +77,8 @@ const configSchema = z.object({
   dynamicSizing: z.boolean().optional(),
   slPercent: z.number().min(0.1).max(20).optional(),
   tpRR: z.number().min(0.5).max(20).optional(),
+  trailArmPct: z.number().min(0.1).max(10).optional(),
+  trailGapPct: z.number().min(0.05).max(10).optional(),
   maxConcurrentPositions: z.number().min(1).max(20).optional(),
   maxTradesPerDay: z.number().min(1).max(100).optional(),
   maxConsecutiveLosses: z.number().min(1).max(20).optional(),

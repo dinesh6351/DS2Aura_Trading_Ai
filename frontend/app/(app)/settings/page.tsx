@@ -10,7 +10,7 @@ interface ConnTest { connected: boolean; canTrade: boolean; canWithdraw: boolean
 interface TgStatus { enabled: boolean; configured: boolean; chatId: string | null; }
 interface BotCfg {
   status: string; mode: string; paperTrading: boolean; telegramEnabled: boolean; telegramChatId: string | null;
-  scoreThreshold: number; leverage: number; marginPerTradeUsd: string; slPercent: string; tpRR: string;
+  scoreThreshold: number; leverage: number; marginPerTradeUsd: string; slPercent: string; tpRR: string; trailArmPct?: string; trailGapPct?: string;
   maxConcurrentPositions: number; maxTradesPerDay: number; maxConsecutiveLosses: number; lossCooldownMin: number; marginGuardPct: number;
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean;
 }
@@ -421,7 +421,9 @@ function TelegramGuide() {
 function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watchlist: string[]; onChange: () => void }) {
   const [cfg, setCfg] = useState({
     scoreThreshold: bot.scoreThreshold, leverage: bot.leverage, marginPerTradeUsd: Number(bot.marginPerTradeUsd),
-    slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR), maxConcurrentPositions: bot.maxConcurrentPositions,
+    slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR),
+    trailArmPct: Number(bot.trailArmPct ?? 0.5), trailGapPct: Number(bot.trailGapPct ?? 0.5),
+    maxConcurrentPositions: bot.maxConcurrentPositions,
     maxTradesPerDay: bot.maxTradesPerDay, maxConsecutiveLosses: bot.maxConsecutiveLosses,
     lossCooldownMin: bot.lossCooldownMin, marginGuardPct: bot.marginGuardPct,
   });
@@ -486,6 +488,8 @@ function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watch
         <Num label="Margin / trade ($)" v={cfg.marginPerTradeUsd} onChange={set('marginPerTradeUsd')} />
         <Num label="Stop loss (%)" v={cfg.slPercent} onChange={set('slPercent')} step="0.1" />
         <Num label="Take profit (R:R)" v={cfg.tpRR} onChange={set('tpRR')} step="0.1" />
+        <Num label="Arm trailing (+%)" v={cfg.trailArmPct} onChange={set('trailArmPct')} step="0.1" />
+        <Num label="Trail gap (%)" v={cfg.trailGapPct} onChange={set('trailGapPct')} step="0.1" />
         <Num label="Max positions" v={cfg.maxConcurrentPositions} onChange={set('maxConcurrentPositions')} />
         <Num label="Max trades / day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
         <Num label="Max consec. losses" v={cfg.maxConsecutiveLosses} onChange={set('maxConsecutiveLosses')} />

@@ -1,5 +1,5 @@
 import type { BotConfig } from '@prisma/client';
-import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
+import { PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { BinanceClient, floorToStep, roundToTick, type Candle } from '../binance/binance.client.js';
@@ -18,20 +18,14 @@ import { effectiveThreshold, bustLearningCache } from './learning.service.js';
 const TIMEFRAME = '1m';
 const MULTI_TFS = ['5m', '15m', '1h'];
 
-/** Highest profit fraction we may lock at the given P&L, or null if not yet armed. */
-function profitLadderLock(pnlFrac: number): number | null {
-  let lock: number | null = null;
-  for (const r of PROFIT_LADDER) if (pnlFrac >= r.trigger) lock = r.lock;
-  return lock;
-}
-
 interface ProtectionDecision { close: boolean; reason: 'TP' | 'SL' | 'TRAIL'; newStopLoss: number | null; lockPct: number | null; }
 
 /**
  * Pure protection evaluator shared by the live and paper watchdogs. Decides
  * whether to close, and whether the stop should ratchet up. With break-even or
- * trailing enabled it uses the profit-lock ladder + a +5% cap; otherwise a fixed
- * SL / (slPct × tpRR) TP.
+ * trailing enabled it arms once profit ≥ cfg.trailArmPct%, then trails the stop
+ * cfg.trailGapPct% behind the running profit (ratchets up only, floored at
+ * break-even) under a +5% take-profit cap; otherwise a fixed SL / (slPct × tpRR) TP.
  */
 function evaluateProtection(
   pos: { side: string; entryPrice: unknown; stopLoss: unknown; trailingArmed?: boolean },
@@ -49,11 +43,14 @@ function evaluateProtection(
   const tpLevel = protectionOn ? TAKE_PROFIT_CAP : tpPct;
   if (pnlFrac >= tpLevel) return { close: true, reason: 'TP', newStopLoss: null, lockPct: null };
 
-  // Ratchet the stop up via the ladder (favorable moves only).
+  // Ratchet the stop up from the user's trail config (favorable moves only): once
+  // profit ≥ arm%, keep the stop gap% behind the running profit, floored at break-even.
   let newStopLoss: number | null = null;
   let lockPct: number | null = null;
   if (protectionOn) {
-    lockPct = profitLadderLock(pnlFrac);
+    const armPct = Number(cfg.trailArmPct) / 100;
+    const gapPct = Number(cfg.trailGapPct) / 100;
+    lockPct = pnlFrac >= armPct ? Math.max(0, pnlFrac - gapPct) : null;
     if (lockPct != null) {
       const candidate = long ? entry * (1 + lockPct) : entry * (1 - lockPct);
       const baseStop = long ? entry * (1 - slPct) : entry * (1 + slPct);

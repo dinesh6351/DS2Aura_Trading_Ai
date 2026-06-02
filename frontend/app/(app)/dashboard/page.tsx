@@ -5,14 +5,14 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { api, openRealtime, getApiBase } from '@/lib/api';
-import { CHANNELS, BILLING, centsToUsd, TradingMode, PROFIT_LADDER, PROFIT_TAKE_CAP } from '@platform/shared';
+import { CHANNELS, BILLING, centsToUsd, TradingMode, PROFIT_TAKE_CAP } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
 
 interface Account { totalBalance: number; availableBalance: number; marginUsed: number; unrealizedPnl: number; openPositions: number; lastSyncedAt: string | null; live?: boolean; }
 interface Stats { winRate: number; realizedPnl: number; todayProfit: number; weeklyProfit: number; monthlyProfit: number; roi: number; totalTrades: number; }
 interface BotCfg {
   status: string; mode: string; scoreThreshold: number; leverage: number;
-  marginPerTradeUsd: string; slPercent: string; tpRR: string;
+  marginPerTradeUsd: string; slPercent: string; tpRR: string; trailArmPct?: string; trailGapPct?: string;
   maxConcurrentPositions: number; maxTradesPerDay: number; lossCooldownMin: number; maxConsecutiveLosses?: number;
   dynamicSizing?: boolean; marginGuardPct?: number; consecutiveLosses?: number;
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean;
@@ -280,7 +280,7 @@ export default function Dashboard() {
 
         {/* Dynamic profit protection ladder (live per-second, up to 5 coins) */}
         <section>
-          <DynamicProtection positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} />
+          <DynamicProtection positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} armPct={num(bot?.trailArmPct) || 0.5} gapPct={num(bot?.trailGapPct) || 0.5} />
         </section>
 
         {/* Live Signals — full table */}
@@ -854,7 +854,7 @@ function LivePositions({ positions }: { positions: Position[] }) {
  * the bot is watching (filled to ~5 total) — all live (1s), each with an Open
  * Chart button. Uses the SAME ladder constants as the engine.
  */
-function DynamicProtection({ positions, signals, slPercent }: { positions: Position[]; signals: SignalRow[]; slPercent: number }) {
+function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { positions: Position[]; signals: SignalRow[]; slPercent: number; armPct: number; gapPct: number }) {
   const held = new Set(positions.map((p) => p.symbol));
   const watching = [...signals].filter((s) => !held.has(s.symbol))
     .sort((a, b) => (b.allPass ? 1 : 0) - (a.allPass ? 1 : 0) || b.score - a.score) // ready-to-trade first
@@ -869,13 +869,10 @@ function DynamicProtection({ positions, signals, slPercent }: { positions: Posit
         <p className="label">🛡️ Dynamic Profit Protection</p>
         <span className="text-xs badge-up animate-pulse">● LIVE · 1s · up to 5 coins</span>
       </div>
-      <p className="text-xs text-muted mb-2">Stop ratchets up as profit grows and never moves back. Initial stop <b className="text-warn">−{slPercent}%</b>.</p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-0.5 text-xs text-muted">
-        {PROFIT_LADDER.map((r) => (
-          <span key={r.trigger}>+{(r.trigger * 100).toFixed(1)}% → lock <b className="text-green-100">+{(r.lock * 100).toFixed(1)}%</b></span>
-        ))}
-        <span className="text-accent">+{(PROFIT_TAKE_CAP * 100).toFixed(0)}% → close ✅</span>
-      </div>
+      <p className="text-xs text-muted mb-1">
+        Arms at <b className="text-green-100">+{armPct}%</b> profit, then trails <b className="text-green-100">{gapPct}%</b> behind — the stop only ratchets up, never back. Initial stop <b className="text-warn">−{slPercent}%</b> · closes at <b className="text-accent">+{(PROFIT_TAKE_CAP * 100).toFixed(0)}%</b>.
+      </p>
+      <p className="text-[11px] text-muted mb-2">Tune “Arm trailing +%” and “Trail gap %” in ⚙️ Bot Settings.</p>
 
       {/* Active positions — live ladder progress */}
       <div className="border-t border-green-900/20 mt-3 pt-2 space-y-3">
@@ -893,16 +890,19 @@ function DynamicProtection({ positions, signals, slPercent }: { positions: Posit
             // shown lock fall +0.5%→+0.2% even though the real stop hadn't moved.
             const sl = p.stopLoss != null ? num(p.stopLoss) : null;
             const stopLockFrac = sl != null ? (long ? (sl - entry) / entry : (entry - sl) / entry) : null;
-            let ladderLock: number | null = null;
-            for (const r of PROFIT_LADDER) if (frac >= r.trigger) ladderLock = r.lock;
+            // Live trail lock from the user's settings: once profit ≥ arm%, the stop
+            // trails gap% behind (floored at break-even). Take the higher of that and
+            // the REAL persisted stop so the shown lock never drops on a retrace.
+            const arm = armPct / 100, gap = gapPct / 100;
+            const trailLock = frac >= arm ? Math.max(0, frac - gap) : null;
             const lock = (stopLockFrac != null && stopLockFrac > 0)
-              ? Math.max(stopLockFrac, ladderLock ?? 0)
-              : ladderLock;
-            const next = PROFIT_LADDER.find((r) => r.trigger > frac);
-            const stopLabel = lock != null && lock > 0 ? `+${(lock * 100).toFixed(2)}% locked` : `−${slPercent}% (initial)`;
+              ? Math.max(stopLockFrac, trailLock ?? 0)
+              : trailLock;
+            const stopLabel = lock != null && lock > 0 ? `+${(lock * 100).toFixed(2)}% locked`
+              : lock != null ? 'break-even locked' : `−${slPercent}% (initial)`;
             const nextLabel = frac >= PROFIT_TAKE_CAP ? 'closing at +5%'
-              : next ? `next: +${(next.trigger * 100).toFixed(1)}% → lock +${(next.lock * 100).toFixed(1)}%`
-              : `+${(PROFIT_TAKE_CAP * 100).toFixed(0)}% → close`;
+              : frac >= arm ? `trailing ${gapPct}% behind`
+              : `arms at +${armPct}%`;
             const prog = Math.max(0, Math.min(100, (frac / PROFIT_TAKE_CAP) * 100));
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
@@ -1242,6 +1242,7 @@ function BotSettings({ bot, watchlist, onSaved }: { bot: BotCfg; watchlist: stri
   const [cfg, setCfg] = useState({
     scoreThreshold: bot.scoreThreshold, leverage: bot.leverage,
     marginPerTradeUsd: Number(bot.marginPerTradeUsd), slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR),
+    trailArmPct: Number(bot.trailArmPct ?? 0.5), trailGapPct: Number(bot.trailGapPct ?? 0.5),
     maxConcurrentPositions: bot.maxConcurrentPositions, maxTradesPerDay: bot.maxTradesPerDay,
   });
   const [wl, setWl] = useState(watchlist.join(', '));
@@ -1268,6 +1269,8 @@ function BotSettings({ bot, watchlist, onSaved }: { bot: BotCfg; watchlist: stri
         <Num label="Leverage" v={cfg.leverage} onChange={set('leverage')} />
         <Num label="Margin $" v={cfg.marginPerTradeUsd} onChange={set('marginPerTradeUsd')} />
         <Num label="SL %" v={cfg.slPercent} onChange={set('slPercent')} step="0.1" />
+        <Num label="Arm trailing +%" v={cfg.trailArmPct} onChange={set('trailArmPct')} step="0.1" />
+        <Num label="Trail gap %" v={cfg.trailGapPct} onChange={set('trailGapPct')} step="0.1" />
         <Num label="TP R:R" v={cfg.tpRR} onChange={set('tpRR')} step="0.1" />
         <Num label="Max Positions" v={cfg.maxConcurrentPositions} onChange={set('maxConcurrentPositions')} />
         <Num label="Max Trades/Day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
