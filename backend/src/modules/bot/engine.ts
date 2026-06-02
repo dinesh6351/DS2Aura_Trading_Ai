@@ -278,19 +278,18 @@ async function openPosition(
       const order = await client.marketOrder(symbol, side, qty) as { orderId?: number };
       orderId = order.orderId;
 
-      // MANDATORY stop loss: attach a server-side STOP_MARKET so the position is
-      // protected the instant price crosses it — not only at the next 60s tick. A
-      // naked leveraged position is more dangerous than a slipped exit, so if the
-      // stop can't attach we immediately close what we just opened.
+      // Prefer a server-side STOP_MARKET so the position is protected the instant
+      // price crosses it (no 60s gap). If it can't attach — e.g. the key lacks
+      // "Futures Algo Orders" (-4120) — DON'T abort: the software watchdog still
+      // enforces the stop / trailing / TP every tick, which is the original design.
+      // Warn once so the user can enable Algo Orders for instant server-side stops.
       const stopPx = filters ? roundToTick(stopLoss, filters.tickSize) : stopLoss;
       try {
         await client.placeStopMarket(symbol, closeSide, stopPx, { quantity: qty });
       } catch (e) {
-        logger.error({ userId, symbol, e }, 'SL attach failed — closing position');
-        await client.marketOrder(symbol, closeSide, qty, true).catch(() => {});
-        await notify(userId, '⚠ Entry aborted — no stop loss',
-          `${symbol}: the position opened but its stop-loss could not be attached, so it was closed immediately for safety. Enable “Futures Algo Orders” on your Binance API key to allow exchange-side stops.`);
-        return false;
+        logger.warn({ userId, symbol, e }, 'exchange SL attach failed — falling back to software watchdog');
+        await notify(userId, '⚠ Using software stop-loss',
+          `${symbol}: opened, but the exchange-side stop couldn’t be attached, so the bot is protecting it with its 60-second software watchdog instead. For instant server-side stops, enable “Futures Algo Orders” on your Binance API key (Binance → API Management → Edit restrictions).`);
       }
     }
 
