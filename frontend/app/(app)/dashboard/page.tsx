@@ -67,6 +67,9 @@ interface LearningOverview {
   raised: number; lowered: number; blocked: number; minSamples: number; coins: LearningCoin[];
 }
 
+interface PnlBucket { net: number; realizedPnl: number; fees: number; funding: number; trades: number; }
+interface BinancePnl { live: boolean; paper?: boolean; today?: PnlBucket; week?: PnlBucket; }
+
 const num = (v: unknown) => Number(v ?? 0);
 const DAY = 864e5;
 
@@ -87,6 +90,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastLoad, setLastLoad] = useState(Date.now());
   const [intel, setIntel] = useState<Intel>();
+  const [bpnl, setBpnl] = useState<BinancePnl>();
 
   const loadSignals = useCallback(async () => {
     setSignals(await api.get<SignalRow[]>('/api/trading/signals').catch(() => []));
@@ -98,7 +102,7 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     // Each call is independently caught so ONE failing endpoint (e.g. a billing
     // hiccup) can never blank the whole dashboard — the rest still renders.
-    const [a, s, b, p, u, mk, tr, pf, lg, wl] = await Promise.all([
+    const [a, s, b, p, u, mk, tr, pf, lg, wl, bp] = await Promise.all([
       api.get<Account>('/api/trading/account').catch(() => undefined),
       api.get<Stats>('/api/trading/stats').catch(() => undefined),
       api.get<BotCfg>('/api/bot/status').catch(() => undefined),
@@ -109,10 +113,11 @@ export default function Dashboard() {
       api.get<Perf[]>('/api/trading/performance').catch(() => [] as Perf[]),
       api.get<LogItem[]>('/api/bot/log').catch(() => [] as LogItem[]),
       api.get<string[]>('/api/trading/watchlist').catch(() => [] as string[]),
+      api.get<BinancePnl>('/api/trading/binance-pnl').catch(() => undefined),
     ]);
     if (a) setAccount(a); if (s) setStats(s); if (b) setBot(b);
     setPositions(p); if (u) setUsage(u); if (mk) setMarket(mk);
-    setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl);
+    setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl); if (bp) setBpnl(bp);
     setLastLoad(Date.now());
   }, []);
 
@@ -343,6 +348,9 @@ export default function Dashboard() {
         </section>
 
         {/* ═══════════════ BELOW — summaries, charts, history & settings ═══════════════ */}
+
+        {/* Real Binance account P&L — reconciled from the exchange income feed */}
+        <BinancePnlPanel data={bpnl} />
 
         {/* Engine activity stat row */}
         <section className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -719,6 +727,53 @@ function ModeToggle({ paper, onSet }: { paper?: boolean; onSet: (paper: boolean)
         💵 Live
       </button>
     </span>
+  );
+}
+
+/**
+ * Real Binance account P&L — the TRUE wallet change from trading (realized PnL +
+ * exchange fees + funding), reconciled from Binance's income feed. Shows fees and
+ * any activity the bot didn't record, so it matches the wallet exactly.
+ */
+function BinancePnlPanel({ data }: { data?: BinancePnl }) {
+  if (!data) return null;
+  if (!data.live) {
+    return (
+      <section className="card">
+        <p className="label mb-1">💼 Real Binance P&L (today · 7d)</p>
+        <Empty>{data.paper
+          ? 'Paper mode — simulated trades only. Real-account P&L appears here in Live mode.'
+          : 'Connect a valid Binance key to see your real account P&L (realized + fees + funding).'}</Empty>
+      </section>
+    );
+  }
+  const Bucket = ({ b, label }: { b?: PnlBucket; label: string }) => {
+    if (!b) return null;
+    return (
+      <div className="bg-bg rounded p-3 border border-green-900/30">
+        <p className="label mb-1">{label}</p>
+        <p className={`text-xl font-bold ${b.net >= 0 ? 'badge-up' : 'badge-down'}`}>{b.net >= 0 ? '+' : ''}{b.net.toFixed(2)} USDT</p>
+        <div className="grid grid-cols-2 gap-x-3 text-xs text-muted mt-1">
+          <span>Realized</span><span className={`text-right ${b.realizedPnl >= 0 ? 'text-accent' : 'text-danger'}`}>{b.realizedPnl >= 0 ? '+' : ''}{b.realizedPnl.toFixed(2)}</span>
+          <span>Fees</span><span className="text-right text-danger">{b.fees.toFixed(2)}</span>
+          <span>Funding</span><span className={`text-right ${b.funding >= 0 ? 'text-accent' : 'text-danger'}`}>{b.funding >= 0 ? '+' : ''}{b.funding.toFixed(2)}</span>
+          <span>Closed trades</span><span className="text-right">{b.trades}</span>
+        </div>
+      </div>
+    );
+  };
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between mb-2">
+        <p className="label">💼 Real Binance P&L — actual wallet (incl. fees &amp; funding)</p>
+        <span className="text-xs badge-up">● from Binance · 60s</span>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Bucket b={data.today} label="Today (UTC)" />
+        <Bucket b={data.week} label="Last 7 days" />
+      </div>
+      <p className="text-xs text-muted mt-2">Your true account change from trading — includes Binance fees/funding and any activity (even trades the bot didn’t record), so it matches your wallet exactly. The Trade History below is the bot’s own record.</p>
+    </section>
   );
 }
 

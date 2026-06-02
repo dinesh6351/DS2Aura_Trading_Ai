@@ -17,6 +17,10 @@ interface LiveSnapshot {
 }
 const _liveCache = new Map<string, { at: number; data: LiveSnapshot }>();
 
+interface PnlBucket { net: number; realizedPnl: number; fees: number; funding: number; trades: number }
+interface BinancePnl { live: boolean; paper?: boolean; today?: PnlBucket; week?: PnlBucket }
+const _pnlCache = new Map<string, { at: number; data: BinancePnl }>();
+
 async function liveSnapshot(userId: string): Promise<LiveSnapshot> {
   const cached = _liveCache.get(userId);
   if (cached && Date.now() - cached.at < 15_000) return cached.data;
@@ -99,6 +103,49 @@ export const tradingService = {
 
   trades(userId: string, limit = 100) {
     return prisma.tradeHistory.findMany({ where: { userId }, orderBy: { closedAt: 'desc' }, take: limit });
+  },
+
+  /**
+   * REAL Binance account P&L for today + last 7d, reconciled from the exchange's
+   * own income feed (realized PnL + commission/fees + funding). This reflects the
+   * ACTUAL wallet change — fees included, plus any activity the bot never recorded
+   * (e.g. aborted entries) — so it always matches Binance. Cached 60s (income is a
+   * weight-30 endpoint). Paper mode / no key → { live:false }.
+   */
+  async binancePnl(userId: string): Promise<BinancePnl> {
+    const cached = _pnlCache.get(userId);
+    if (cached && Date.now() - cached.at < 60_000) return cached.data;
+
+    const cfg = await prisma.botConfig.findUnique({ where: { userId }, select: { paperTrading: true } });
+    const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID' } });
+    let data: BinancePnl = { live: false, paper: !!cfg?.paperTrading };
+    if (!cfg?.paperTrading && key && !isBanned()) {
+      try {
+        const client = new BinanceClient(await apiKeyService.getDecryptedCreds(userId));
+        const weekStart = Date.now() - 7 * 864e5;
+        const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
+        const income = await client.getAllIncome(weekStart);
+        const agg = (fromMs: number): PnlBucket => {
+          let realized = 0, fees = 0, funding = 0, other = 0, trades = 0;
+          for (const i of income) {
+            if (i.time < fromMs) continue;
+            const v = Number(i.income);
+            if (i.incomeType === 'REALIZED_PNL') { realized += v; trades++; }
+            else if (i.incomeType === 'COMMISSION') fees += v;       // negative (fee paid)
+            else if (i.incomeType === 'FUNDING_FEE') funding += v;
+            else other += v;
+          }
+          return {
+            net: +(realized + fees + funding + other).toFixed(4),
+            realizedPnl: +realized.toFixed(4), fees: +fees.toFixed(4),
+            funding: +funding.toFixed(4), trades,
+          };
+        };
+        data = { live: true, today: agg(todayStart.getTime()), week: agg(weekStart) };
+      } catch (e) { logger.warn({ userId, e }, 'binancePnl fetch failed'); data = { live: false }; }
+    }
+    _pnlCache.set(userId, { at: Date.now(), data });
+    return data;
   },
 
   async stats(userId: string) {

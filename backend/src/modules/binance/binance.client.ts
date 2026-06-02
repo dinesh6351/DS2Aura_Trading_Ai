@@ -98,6 +98,13 @@ export class BinanceClient {
       'GET', '/fapi/v1/income', { incomeType: 'REALIZED_PNL', startTime: sinceMs, limit: 1000 });
   }
 
+  /** ALL futures income (realized PnL + COMMISSION + FUNDING_FEE + …) since a time.
+   *  Weight 30 — cache the result. Powers the real-account P&L reconciliation panel. */
+  async getAllIncome(sinceMs: number) {
+    return this.signed<Array<{ symbol: string; income: string; time: number; incomeType: string }>>(
+      'GET', '/fapi/v1/income', { startTime: sinceMs, limit: 1000 });
+  }
+
   async setLeverage(symbol: string, leverage: number): Promise<void> {
     try { await this.signed('POST', '/fapi/v1/leverage', { symbol, leverage }); }
     catch (e) { logger.warn({ e, symbol }, 'setLeverage failed (continuing)'); }

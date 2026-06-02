@@ -22,6 +22,7 @@ tradingRouter.get('/account', asyncHandler(async (req, res) => ok(res, await tra
 tradingRouter.get('/positions', asyncHandler(async (req, res) => ok(res, await tradingService.positions(uid(req)))));
 tradingRouter.get('/trades', asyncHandler(async (req, res) => ok(res, await tradingService.trades(uid(req)))));
 tradingRouter.get('/stats', asyncHandler(async (req, res) => ok(res, await tradingService.stats(uid(req)))));
+tradingRouter.get('/binance-pnl', asyncHandler(async (req, res) => ok(res, await tradingService.binancePnl(uid(req)))));
 tradingRouter.get('/pnl/history', asyncHandler(async (req, res) => ok(res, await tradingService.pnlHistory(uid(req)))));
 
 // ── Trader Performance Analysis ──────────────────────────────────────────────
