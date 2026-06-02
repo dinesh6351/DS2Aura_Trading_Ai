@@ -204,10 +204,23 @@ export class BinanceClient {
       const res = await fetch(`${env.BINANCE_FAPI_BASE}/fapi/v1/ticker/24hr`);
       if (!res.ok) throw Errors.upstream(`24hr ticker ${res.status}`);
       const raw = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
-      return raw
+      const futTop = raw
         .filter((t) => /^[A-Z0-9]+USDT$/.test(t.symbol)) // USDT perpetuals only (skip dated contracts)
         .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
         .map((t) => t.symbol);
+      // Keep only symbols that ALSO trade on SPOT. The dashboard computes signals from
+      // spot klines, so futures-only perps (e.g. 1000PEPEUSDT, 1000BONKUSDT) have no
+      // spot data and silently drop — which is why "Top 10" was showing only ~6.
+      // Filtering here (before slicing) means Top N returns a full N analysable coins.
+      let spot: Set<string> | null = null;
+      try {
+        const s = await fetch(`${env.BINANCE_SPOT_BASE}/api/v3/exchangeInfo`);
+        if (s.ok) {
+          const j = (await s.json()) as { symbols?: Array<{ symbol: string; status: string }> };
+          spot = new Set((j.symbols ?? []).filter((x) => x.status === 'TRADING').map((x) => x.symbol));
+        }
+      } catch { /* spot list unavailable → fall back to the unfiltered futures ranking */ }
+      return spot ? futTop.filter((sym) => spot!.has(sym)) : futTop;
     });
     return all.slice(0, Math.max(1, Math.min(limit, all.length)));
   }

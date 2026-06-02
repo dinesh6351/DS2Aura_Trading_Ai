@@ -59,7 +59,7 @@ tradingRouter.get('/top-symbols', asyncHandler(async (req, res) => {
 tradingRouter.get('/signals', asyncHandler(async (req, res) => {
   const userId = uid(req);
   const wl = await prisma.watchlist.findFirst({ where: { userId, isDefault: true } });
-  const symbols = (wl?.symbols ?? ['BTCUSDT']).slice(0, 30);
+  const symbols = (wl?.symbols ?? ['BTCUSDT']).slice(0, 50);
   const cfg = await prisma.botConfig.findUnique({ where: { userId } });
   const market = await getMarketStatus();
   return ok(res, await signalsOverview(symbols, cfg, market));
