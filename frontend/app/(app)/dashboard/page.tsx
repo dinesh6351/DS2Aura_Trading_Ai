@@ -884,10 +884,20 @@ function DynamicProtection({ positions, signals, slPercent }: { positions: Posit
             const mark = prices[p.symbol] ?? num(p.markPrice);
             const frac = entry > 0 ? (long ? (mark - entry) / entry : (entry - mark) / entry) : 0;
             const pct = frac * 100;
-            let lock: number | null = null;
-            for (const r of PROFIT_LADDER) if (frac >= r.trigger) lock = r.lock;
+            // The shown stop is the bot's REAL persisted stop (which only ratchets UP,
+            // never back). We also look at the rung for the current profit and take the
+            // HIGHER, so the locked % never drops when profit retraces. Previously this
+            // recomputed purely from live profit, so a dip from +1.0%→+0.8% made the
+            // shown lock fall +0.5%→+0.2% even though the real stop hadn't moved.
+            const sl = p.stopLoss != null ? num(p.stopLoss) : null;
+            const stopLockFrac = sl != null ? (long ? (sl - entry) / entry : (entry - sl) / entry) : null;
+            let ladderLock: number | null = null;
+            for (const r of PROFIT_LADDER) if (frac >= r.trigger) ladderLock = r.lock;
+            const lock = (stopLockFrac != null && stopLockFrac > 0)
+              ? Math.max(stopLockFrac, ladderLock ?? 0)
+              : ladderLock;
             const next = PROFIT_LADDER.find((r) => r.trigger > frac);
-            const stopLabel = lock != null ? `+${(lock * 100).toFixed(1)}% locked` : `−${slPercent}% (initial)`;
+            const stopLabel = lock != null && lock > 0 ? `+${(lock * 100).toFixed(2)}% locked` : `−${slPercent}% (initial)`;
             const nextLabel = frac >= PROFIT_TAKE_CAP ? 'closing at +5%'
               : next ? `next: +${(next.trigger * 100).toFixed(1)}% → lock +${(next.lock * 100).toFixed(1)}%`
               : `+${(PROFIT_TAKE_CAP * 100).toFixed(0)}% → close`;
