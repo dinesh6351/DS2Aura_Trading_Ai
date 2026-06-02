@@ -5,11 +5,15 @@
 :root { color-scheme: dark; }
 body { @apply bg-bg text-green-100 font-mono; }
 
-.card { @apply bg-panel border border-green-900/40 rounded-lg p-4; }
-.stat { @apply text-2xl font-bold text-accent; }
-.label { @apply text-xs uppercase tracking-wider text-muted; }
-.btn { @apply px-3 py-2 rounded bg-accent/20 border border-accent/40 text-accent hover:bg-accent/30 transition; }
-.btn-danger { @apply px-3 py-2 rounded bg-danger/20 border border-danger/40 text-danger hover:bg-danger/30 transition; }
+/* Cards/stats scale down on phones so the dense dashboard/admin/profile grids
+   stay readable and don't overflow on small screens. */
+.card { @apply bg-panel border border-green-900/40 rounded-lg p-3 sm:p-4; }
+.stat { @apply text-lg sm:text-2xl font-bold text-accent break-words; }
+.label { @apply text-[10px] sm:text-xs uppercase tracking-wider text-muted; }
+.btn { @apply px-2.5 py-1.5 sm:px-3 sm:py-2 rounded bg-accent/20 border border-accent/40 text-accent hover:bg-accent/30 transition; }
+.btn-danger { @apply px-2.5 py-1.5 sm:px-3 sm:py-2 rounded bg-danger/20 border border-danger/40 text-danger hover:bg-danger/30 transition; }
+/* Tables inside .card.overflow-x-auto scroll horizontally on mobile (kept here as a
+   reminder of the pattern used across data tables). */
 .badge-up { @apply text-accent; }
 .badge-down { @apply text-danger; }
 

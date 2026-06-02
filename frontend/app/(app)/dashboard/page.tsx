@@ -163,7 +163,7 @@ export default function Dashboard() {
   return (
     <>
       <AppNav active="dashboard" />
-      <main className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
+      <main className="p-3 sm:p-4 md:p-6 space-y-4 md:space-y-6 max-w-7xl mx-auto">
         {/* Header + bot controls */}
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-wrap">
@@ -175,7 +175,7 @@ export default function Dashboard() {
               {stats?.timezone && <span className="text-muted">· 🌐 {regionLabel(stats.timezone)}{stats.lastResetAt ? ` · day reset ${new Date(stats.lastResetAt).toLocaleString()}` : ''}</span>}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2 justify-end">
             <ModeToggle paper={bot?.paperTrading} onSet={setPaperMode} />
             <button className="btn text-xs" disabled={refreshing} onClick={refreshAll}>{refreshing ? '…' : '↻ Refresh'}</button>
             <span className={`label ${bot?.status === 'RUNNING' ? 'text-accent' : 'text-muted'}`}>BOT: {bot?.status ?? '…'} · {bot?.mode}</span>

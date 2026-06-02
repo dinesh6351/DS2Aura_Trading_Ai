@@ -56,7 +56,7 @@ export default function SettingsPage() {
   return (
     <>
       <AppNav active="settings" />
-      <main className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
+      <main className="p-3 sm:p-4 md:p-6 space-y-5 md:space-y-6 max-w-4xl mx-auto">
         <header>
           <h1 className="text-accent text-xl font-bold">👤 Profile</h1>
           <p className="text-muted text-sm">Your account details, trading setup, coupons and security — all in one place.</p>

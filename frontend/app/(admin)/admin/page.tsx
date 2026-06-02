@@ -91,7 +91,7 @@ export default function AdminPage() {
     setBrand((p) => (p ? { ...p, [k]: e.target.value } : p));
 
   return (
-    <main className="p-6 space-y-6 max-w-7xl mx-auto">
+    <main className="p-3 sm:p-4 md:p-6 space-y-5 md:space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-accent text-xl font-bold">▚ Admin CRM</h1>
         <div className="flex items-center gap-2">
@@ -189,13 +189,13 @@ export default function AdminPage() {
 
       <CouponsAdmin users={users} onNote={setNote} />
 
-      <div className="card">
+      <div className="card overflow-x-auto">
         <div className="flex gap-2 mb-3">
-          <input className="bg-bg border border-green-900/40 rounded px-3 py-2 flex-1"
+          <input className="bg-bg border border-green-900/40 rounded px-3 py-2 flex-1 min-w-0"
             placeholder="search email" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button className="btn" onClick={load}>Search</button>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-sm min-w-[640px]">
           <thead><tr className="text-muted text-left">
             <th>Email</th><th>Status</th><th>Bot</th><th>Plan</th><th>Sub</th><th>Profit</th><th>Mo. Trades</th><th>Actions</th>
           </tr></thead>
