@@ -212,8 +212,8 @@ export default function Dashboard() {
           <LivePortfolioCard account={account} positions={positions} />
           <Card label="Available" value={fmt(account?.availableBalance)} />
           <Card label="In Trade (margin)" value={fmt(account?.marginUsed)} />
-          <Card label="Unrealized P&L" value={fmt(account?.unrealizedPnl)} signed />
-          <Card label="Today P&L" value={fmt(d.todayPnl)} signed />
+          <LiveUnrealizedCard account={account} positions={positions} />
+          <LiveTodayCard todayRealized={d.todayPnl} positions={positions} />
           <Card label="ROI" value={`${stats?.roi ?? 0}%`} />
           <Card label="Realized 7D" value={fmt(d.realized7d)} signed />
           <Card label="Profit Factor" value={d.profitFactor} />
@@ -1100,6 +1100,47 @@ function LivePortfolioCard({ account, positions }: { account?: Account; position
       <p className="stat">{account ? fmt(base + unreal) : '…'}</p>
       {positions.length > 0 && (
         <p className={`text-xs ${unreal >= 0 ? 'text-accent' : 'text-danger'}`}>{unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} unrealized</p>
+      )}
+    </div>
+  );
+}
+/** Sum of open positions' unrealized P&L using the live price feed. */
+function liveUnreal(positions: Position[], prices: Record<string, number>): number {
+  return positions.reduce((s, p) => {
+    const long = p.side === 'LONG';
+    const entry = num(p.entryPrice);
+    const mark = prices[p.symbol] ?? num(p.markPrice);
+    return s + (long ? mark - entry : entry - mark) * num(p.quantity);
+  }, 0);
+}
+/** Unrealized P&L — ticks live from the 1s price feed. */
+function LiveUnrealizedCard({ account, positions }: { account?: Account; positions: Position[] }) {
+  const prices = useLivePrices(positions.map((p) => p.symbol));
+  const v = positions.length ? liveUnreal(positions, prices) : num(account?.unrealizedPnl);
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <p className="label">Unrealized P&L</p>
+        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+      </div>
+      <p className={`stat ${v >= 0 ? 'badge-up' : 'badge-down'}`}>{account ? fmt(v) : '…'}</p>
+    </div>
+  );
+}
+/** Today P&L — today's closed realized + live unrealized of open positions, so it ticks live. */
+function LiveTodayCard({ todayRealized, positions }: { todayRealized: number; positions: Position[] }) {
+  const prices = useLivePrices(positions.map((p) => p.symbol));
+  const unreal = liveUnreal(positions, prices);
+  const total = todayRealized + unreal;
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <p className="label">Today P&L</p>
+        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+      </div>
+      <p className={`stat ${total >= 0 ? 'badge-up' : 'badge-down'}`}>{fmt(total)}</p>
+      {positions.length > 0 && (
+        <p className="text-muted text-[11px] mt-0.5">{fmt(todayRealized)} closed · {unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} open</p>
       )}
     </div>
   );
