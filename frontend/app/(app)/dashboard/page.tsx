@@ -440,7 +440,7 @@ export default function Dashboard() {
 
         {/* Today's trades — per-trade reasoning */}
         <section>
-          <p className="label mb-2">📋 Today&apos;s trades — each closed trade with its win/loss reason</p>
+          <p className="label mb-2">📋 Today&apos;s trades — entry/exit value, Binance fee &amp; net P&amp;L per trade</p>
           {d.todayTrades.length === 0 ? (
             <div className="card"><Empty>No trades closed today yet. The quality bar (score ≥ {bot?.scoreThreshold ?? 85}) keeps the bot patient.</Empty></div>
           ) : (
@@ -448,7 +448,7 @@ export default function Dashboard() {
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {d.todayTrades.slice(0, 12).map((t) => <TradeReasonCard key={t.id} t={t} />)}
               </div>
-              <p className="text-xs text-muted mt-2">{d.todayTradesFooter}</p>
+              <p className="text-xs text-muted mt-2">{d.todayTradesFooter} Fees shown are the estimated round-trip taker fee; your exact Binance fees &amp; funding (hidden charges) are in the “Real Binance P&amp;L” card above.</p>
             </>
           )}
         </section>
@@ -1069,15 +1069,38 @@ function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: st
   return <div className={`card ${border}`}><p className="text-sm"><span className="mr-1">{icon}</span>{text}</p></div>;
 }
 function TradeReasonCard({ t }: { t: TradeReason }) {
-  const pnl = num(t.netPnl);
+  const net = num(t.netPnl);
+  const gross = num(t.grossPnl);
+  const fee = num(t.feeUsd);
+  const qty = num(t.quantity);
+  const entry = num(t.entryPrice);
+  const exit = num(t.exitPrice);
+  const entryVal = entry * qty;          // notional in at entry
+  const exitVal = exit * qty;            // notional out at exit
+  const margin = t.leverage ? entryVal / t.leverage : 0;
+  const dur = t.durationSec == null ? '—'
+    : t.durationSec >= 3600 ? `${(t.durationSec / 3600).toFixed(1)}h` : `${Math.round(t.durationSec / 60)}m`;
   return (
     <div className="card">
       <p className="font-bold flex items-center gap-2">
         {t.symbol} <span className={t.side === 'LONG' ? 'badge-up' : 'badge-down'}>{t.side}</span>
-        <span className={`ml-auto ${pnl >= 0 ? 'badge-up' : 'badge-down'}`}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</span>
+        <span className="text-xs text-muted">{t.leverage}×</span>
+        <span className={`ml-auto ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
       </p>
-      <p className="text-xs text-muted mt-1">{num(t.entryPrice).toFixed(4)} → {num(t.exitPrice).toFixed(4)} · {t.exitReason} · {new Date(t.closedAt).toLocaleTimeString()}</p>
-      <p className="text-sm mt-1">{t.reason}</p>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-2">
+        <span className="text-muted">Entry price</span><span className="text-right">{entry.toFixed(4)}</span>
+        <span className="text-muted">Exit price</span><span className="text-right">{exit.toFixed(4)}</span>
+        <span className="text-muted">Entry value</span><span className="text-right">${entryVal.toFixed(2)}</span>
+        <span className="text-muted">Exit value</span><span className="text-right">${exitVal.toFixed(2)}</span>
+        <span className="text-muted">Qty · Margin</span><span className="text-right">{qty} · ${margin.toFixed(2)}</span>
+        <span className="text-muted">Gross P&L</span><span className={`text-right ${gross >= 0 ? 'text-accent' : 'text-danger'}`}>{gross >= 0 ? '+' : ''}${gross.toFixed(3)}</span>
+        <span className="text-muted">Binance fee (est.)</span><span className="text-right text-danger">-${fee.toFixed(3)}</span>
+        <span className="text-muted font-bold">Net P&L</span><span className={`text-right font-bold ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
+      </div>
+      <p className="text-xs text-muted mt-1.5 border-t border-green-900/20 pt-1.5">
+        {t.exitReason} · {dur}{t.rr ? ` · R:R ${num(t.rr).toFixed(1)}` : ''} · {new Date(t.closedAt).toLocaleTimeString()}
+      </p>
+      <p className="text-xs mt-1">{t.reason}</p>
     </div>
   );
 }

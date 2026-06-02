@@ -92,7 +92,13 @@ export default function AdminPage() {
 
   return (
     <main className="p-6 space-y-6 max-w-7xl mx-auto">
-      <h1 className="text-accent text-xl font-bold">▚ Admin CRM</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-accent text-xl font-bold">▚ Admin CRM</h1>
+        <div className="flex items-center gap-2">
+          <a href="/dashboard" className="btn text-sm">← Dashboard</a>
+          <a href="/settings" className="btn text-sm">Profile</a>
+        </div>
+      </div>
       {ov?.binanceBanActive && <p className="text-danger">⚠ Binance rate-limit ban active on worker IP</p>}
       {note && (
         <div className={`card ${note.startsWith('❌') ? 'border-danger/50 text-danger' : 'border-accent/50 text-accent'}`}>{note}</div>
