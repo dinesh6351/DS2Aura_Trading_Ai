@@ -189,12 +189,9 @@ export default function Dashboard() {
           </div>
         )}
 
-        {usage && <UsageMeter u={usage} onSubscribe={subscribe} />}
+        {/* ═══════════════ TOP — live trading & key numbers ═══════════════ */}
 
-        {/* What is this bot? — collapsible explainer for new users */}
-        <BotExplainer bot={bot} />
-
-        {/* Portfolio stat cards */}
+        {/* Portfolio stat cards (key KPIs) */}
         <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card label="Portfolio Value" value={fmt(account?.totalBalance)} />
           <Card label="Available" value={fmt(account?.availableBalance)} />
@@ -208,54 +205,95 @@ export default function Dashboard() {
           <Card label="Open Trades" value={String(account?.openPositions ?? 0)} />
         </section>
 
-        {/* Engine activity stat row */}
-        <section className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <Card label="Decisions (now)" value={String(d.decisions)} />
-          <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
-          <Card label="Blocked (now)" value={String(d.blocked)} />
-          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
-          <Card label="Volume" value={fmt(d.volume)} />
-          <Card label="Est. Fees" value={fmt(d.fees)} />
+        {/* Open positions (live, 1s) + Protection status */}
+        <section className="grid md:grid-cols-2 gap-6">
+          <LivePositions positions={positions} />
+          <div className="card">
+            <p className="label mb-2">🛡️ Protection Status — SL/TP per open position</p>
+            {positions.length === 0 ? (
+              <Empty>No open positions. When you open one, SL/TP planning shows here. Auto-protect: {bot?.useBreakEven || bot?.useTrailingStop ? 'ON' : 'OFF'}</Empty>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {positions.map((p) => {
+                  const live = signals.find((s) => s.symbol === p.symbol);
+                  const ls = live?.score;
+                  const entry = p.entryScore;
+                  const arrow = ls != null && entry != null ? (ls > entry ? '↑' : ls < entry ? '↓' : '→') : '';
+                  const lsCls = ls == null ? 'text-muted' : ls >= (live?.threshold ?? 80) ? 'badge-up' : entry != null && ls < entry ? 'badge-down' : 'text-warn';
+                  return (
+                    <div key={p.id} className="border-t border-green-900/30 pt-2">
+                      <p className="font-bold">{p.symbol} <span className={p.side === 'LONG' ? 'badge-up' : 'badge-down'}>{p.side}</span></p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-xs text-muted mt-1">
+                        <span>SL: <b className="text-danger">{p.stopLoss ? num(p.stopLoss).toFixed(4) : '—'}</b></span>
+                        <span>TP: <b className="text-accent">{p.takeProfit ? num(p.takeProfit).toFixed(4) : '—'}</b></span>
+                        <span>Entry score: <b>{entry ?? '—'}</b></span>
+                        <span>Live score: <b className={lsCls}>{ls ?? '—'} {arrow}</b></span>
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="text-xs text-muted pt-1">Break-even: {bot?.useBreakEven ? 'ON' : 'OFF'} · Trailing stop: {bot?.useTrailingStop ? 'ON' : 'OFF'}</p>
+              </div>
+            )}
+          </div>
         </section>
 
-        {/* Top Opportunity */}
-        <section className="card">
-          <p className="label mb-2">🎯 Top Opportunity — Live</p>
-          {!d.top ? <Empty>No directional candidate right now — bot is standing aside.</Empty> : (
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-2xl font-bold">{d.top.symbol}{' '}
-                  <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span>
-                </p>
-                <p className="text-muted text-sm mt-1">
-                  Score <b className="text-accent">{d.top.score}</b>/100 · threshold {d.top.threshold} ·{' '}
-                  {d.top.allPass ? <span className="badge-up">✅ would trade</span> : <span className="text-warn">⏳ {d.top.blocking}</span>}
-                </p>
-              </div>
-              <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
-            </div>
+        {/* Dynamic profit protection ladder (live per-second, up to 5 coins) */}
+        <section>
+          <DynamicProtection positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} />
+        </section>
+
+        {/* Live Signals — full table */}
+        <section className="card overflow-x-auto">
+          <div className="flex items-center justify-between mb-2">
+            <p className="label">📡 Live Signals — BTC + altcoin calcs right now</p>
+            <span className="text-xs">{signals.filter((s) => s.allPass).length > 0
+              ? <span className="badge-up animate-pulse">{signals.filter((s) => s.allPass).length} READY ✅</span>
+              : <span className="text-muted">0 ready</span>} <span className="text-muted">· {signals.length} watched · {d.blocked} blocked · ↻ 60s</span></span>
+          </div>
+          {signals.length === 0 ? <Empty>Computing signals…</Empty> : (
+            <table className="w-full text-sm min-w-[820px]">
+              <thead><tr className="text-muted text-xs">
+                <th className="text-left">Symbol</th><th>Bias</th><th>Score</th><th>Verdict</th>
+                <th>Trend</th><th>RSI3</th><th>Vol×</th><th>VWAP Δ</th><th>ADX</th>
+                <th className="text-left pl-3">What&apos;s blocking</th><th></th>
+              </tr></thead>
+              <tbody>{signals.map((s) => (
+                <tr key={s.symbol} className={`border-t border-green-900/30 ${s.allPass ? 'bg-accent/10' : ''}`}>
+                  <td className="font-bold">{s.symbol}</td>
+                  <td className="text-center"><span className={s.bias === 'long' ? 'badge-up' : s.bias === 'short' ? 'badge-down' : 'text-muted'}>{s.bias}</span></td>
+                  <td className="text-center"><b className={s.score >= s.threshold ? 'text-accent' : ''}>{s.score}</b></td>
+                  <td className={`text-center text-xs ${s.allPass ? 'badge-up' : 'text-muted'}`}>{s.allPass ? '✅ READY' : '🚫'}</td>
+                  <td className="text-center text-xs">{s.trend === 'up' ? '↗' : s.trend === 'down' ? '↘' : '→'}</td>
+                  <td className="text-center text-xs">{s.rsi3 ?? '—'}</td>
+                  <td className="text-center text-xs">{s.volRatio ?? '—'}</td>
+                  <td className={`text-center text-xs ${num(s.vwapDeltaPct) >= 0 ? 'badge-up' : 'badge-down'}`}>{s.vwapDeltaPct == null ? '—' : `${s.vwapDeltaPct}%`}</td>
+                  <td className="text-center text-xs">{s.adx ?? '—'}</td>
+                  <td className="text-left pl-3 text-xs text-muted">{s.blocking}</td>
+                  <td className="text-right"><a href={`/chart/${s.symbol}`} className="text-accent text-xs">chart</a></td>
+                </tr>))}</tbody>
+            </table>
           )}
         </section>
 
-        {/* AI & Strategy Intelligence (regime, active strategy, F&G, learning, news) */}
-        <IntelSection intel={intel} />
-
-        {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
-        <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
-
-        {/* Market status + Next trade + Equity curve */}
+        {/* Top Opportunity (2/3) + Next Trade Preview (1/3) */}
         <section className="grid md:grid-cols-3 gap-6">
-          <div className="card">
-            <p className="label mb-2">Market Status</p>
-            {market ? (
-              <div className="text-sm space-y-1">
-                <Row k="BTC Trend" v={<span className={trendColor(market.btcTrend)}>{market.btcTrend}</span>} />
-                <Row k="Verdict" v={<span className={market.verdict === 'HIGH_RISK' ? 'badge-down' : market.verdict === 'SAFE' ? 'badge-up' : 'text-warn'}>{market.verdict}</span>} />
-                <Row k="Fear & Greed" v={`${market.fearGreed.value} · ${market.fearGreed.label}`} />
-                <Row k="BTC ATR" v={`${(market.btcAtrPct * 100).toFixed(2)}%`} />
-                <Row k="Consecutive losses" v={String(bot?.consecutiveLosses ?? 0)} />
+          <div className="card md:col-span-2">
+            <p className="label mb-2">🎯 Top Opportunity — Live</p>
+            {!d.top ? <Empty>No directional candidate right now — bot is standing aside.</Empty> : (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-2xl font-bold">{d.top.symbol}{' '}
+                    <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span>
+                  </p>
+                  <p className="text-muted text-sm mt-1">
+                    Score <b className="text-accent">{d.top.score}</b>/100 · threshold {d.top.threshold} ·{' '}
+                    {d.top.allPass ? <span className="badge-up">✅ would trade</span> : <span className="text-warn">⏳ {d.top.blocking}</span>}
+                  </p>
+                </div>
+                <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
               </div>
-            ) : <Empty>Loading…</Empty>}
+            )}
           </div>
           <div className="card">
             <p className="label mb-2">Next Trade Preview</p>
@@ -269,6 +307,34 @@ export default function Dashboard() {
                 <a href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</a>
               </div>
             )}
+          </div>
+        </section>
+
+        {/* ═══════════════ BELOW — summaries, charts, history & settings ═══════════════ */}
+
+        {/* Engine activity stat row */}
+        <section className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <Card label="Decisions (now)" value={String(d.decisions)} />
+          <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
+          <Card label="Blocked (now)" value={String(d.blocked)} />
+          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
+          <Card label="Volume" value={fmt(d.volume)} />
+          <Card label="Est. Fees" value={fmt(d.fees)} />
+        </section>
+
+        {/* Market status + Equity curve */}
+        <section className="grid md:grid-cols-2 gap-6">
+          <div className="card">
+            <p className="label mb-2">Market Status</p>
+            {market ? (
+              <div className="text-sm space-y-1">
+                <Row k="BTC Trend" v={<span className={trendColor(market.btcTrend)}>{market.btcTrend}</span>} />
+                <Row k="Verdict" v={<span className={market.verdict === 'HIGH_RISK' ? 'badge-down' : market.verdict === 'SAFE' ? 'badge-up' : 'text-warn'}>{market.verdict}</span>} />
+                <Row k="Fear & Greed" v={`${market.fearGreed.value} · ${market.fearGreed.label}`} />
+                <Row k="BTC ATR" v={`${(market.btcAtrPct * 100).toFixed(2)}%`} />
+                <Row k="Consecutive losses" v={String(bot?.consecutiveLosses ?? 0)} />
+              </div>
+            ) : <Empty>Loading…</Empty>}
           </div>
           <div className="card">
             <p className="label mb-2">Equity Curve (cumulative net P&L)</p>
@@ -347,77 +413,6 @@ export default function Dashboard() {
           )}
         </section>
 
-        {/* Open positions (live, 1s) + Protection status */}
-        <section className="grid md:grid-cols-2 gap-6">
-          <LivePositions positions={positions} />
-          <div className="card">
-            <p className="label mb-2">🛡️ Protection Status — SL/TP per open position</p>
-            {positions.length === 0 ? (
-              <Empty>No open positions. When you open one, SL/TP planning shows here. Auto-protect: {bot?.useBreakEven || bot?.useTrailingStop ? 'ON' : 'OFF'}</Empty>
-            ) : (
-              <div className="space-y-2 text-sm">
-                {positions.map((p) => {
-                  const live = signals.find((s) => s.symbol === p.symbol);
-                  const ls = live?.score;
-                  const entry = p.entryScore;
-                  const arrow = ls != null && entry != null ? (ls > entry ? '↑' : ls < entry ? '↓' : '→') : '';
-                  const lsCls = ls == null ? 'text-muted' : ls >= (live?.threshold ?? 80) ? 'badge-up' : entry != null && ls < entry ? 'badge-down' : 'text-warn';
-                  return (
-                    <div key={p.id} className="border-t border-green-900/30 pt-2">
-                      <p className="font-bold">{p.symbol} <span className={p.side === 'LONG' ? 'badge-up' : 'badge-down'}>{p.side}</span></p>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-xs text-muted mt-1">
-                        <span>SL: <b className="text-danger">{p.stopLoss ? num(p.stopLoss).toFixed(4) : '—'}</b></span>
-                        <span>TP: <b className="text-accent">{p.takeProfit ? num(p.takeProfit).toFixed(4) : '—'}</b></span>
-                        <span>Entry score: <b>{entry ?? '—'}</b></span>
-                        <span>Live score: <b className={lsCls}>{ls ?? '—'} {arrow}</b></span>
-                      </div>
-                    </div>
-                  );
-                })}
-                <p className="text-xs text-muted pt-1">Break-even: {bot?.useBreakEven ? 'ON' : 'OFF'} · Trailing stop: {bot?.useTrailingStop ? 'ON' : 'OFF'}</p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Dynamic profit protection ladder (live per-second, up to 5 coins) */}
-        <section>
-          <DynamicProtection positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} />
-        </section>
-
-        {/* Live Signals — full table */}
-        <section className="card overflow-x-auto">
-          <div className="flex items-center justify-between mb-2">
-            <p className="label">📡 Live Signals — BTC + altcoin calcs right now</p>
-            <span className="text-xs">{signals.filter((s) => s.allPass).length > 0
-              ? <span className="badge-up animate-pulse">{signals.filter((s) => s.allPass).length} READY ✅</span>
-              : <span className="text-muted">0 ready</span>} <span className="text-muted">· {signals.length} watched · {d.blocked} blocked · ↻ 60s</span></span>
-          </div>
-          {signals.length === 0 ? <Empty>Computing signals…</Empty> : (
-            <table className="w-full text-sm min-w-[820px]">
-              <thead><tr className="text-muted text-xs">
-                <th className="text-left">Symbol</th><th>Bias</th><th>Score</th><th>Verdict</th>
-                <th>Trend</th><th>RSI3</th><th>Vol×</th><th>VWAP Δ</th><th>ADX</th>
-                <th className="text-left pl-3">What&apos;s blocking</th><th></th>
-              </tr></thead>
-              <tbody>{signals.map((s) => (
-                <tr key={s.symbol} className={`border-t border-green-900/30 ${s.allPass ? 'bg-accent/10' : ''}`}>
-                  <td className="font-bold">{s.symbol}</td>
-                  <td className="text-center"><span className={s.bias === 'long' ? 'badge-up' : s.bias === 'short' ? 'badge-down' : 'text-muted'}>{s.bias}</span></td>
-                  <td className="text-center"><b className={s.score >= s.threshold ? 'text-accent' : ''}>{s.score}</b></td>
-                  <td className={`text-center text-xs ${s.allPass ? 'badge-up' : 'text-muted'}`}>{s.allPass ? '✅ READY' : '🚫'}</td>
-                  <td className="text-center text-xs">{s.trend === 'up' ? '↗' : s.trend === 'down' ? '↘' : '→'}</td>
-                  <td className="text-center text-xs">{s.rsi3 ?? '—'}</td>
-                  <td className="text-center text-xs">{s.volRatio ?? '—'}</td>
-                  <td className={`text-center text-xs ${num(s.vwapDeltaPct) >= 0 ? 'badge-up' : 'badge-down'}`}>{s.vwapDeltaPct == null ? '—' : `${s.vwapDeltaPct}%`}</td>
-                  <td className="text-center text-xs">{s.adx ?? '—'}</td>
-                  <td className="text-left pl-3 text-xs text-muted">{s.blocking}</td>
-                  <td className="text-right"><a href={`/chart/${s.symbol}`} className="text-accent text-xs">chart</a></td>
-                </tr>))}</tbody>
-            </table>
-          )}
-        </section>
-
         {/* Trade history + Per-symbol P&L */}
         <section className="grid md:grid-cols-2 gap-6">
           <div className="card overflow-x-auto">
@@ -484,6 +479,18 @@ export default function Dashboard() {
             </>
           )}
         </section>
+
+        {/* AI & Strategy Intelligence (regime, active strategy, F&G, learning, news) */}
+        <IntelSection intel={intel} />
+
+        {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
+        <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
+
+        {/* What is this bot? — collapsible explainer for new users */}
+        <BotExplainer bot={bot} />
+
+        {/* Usage & Billing — subscription / usage meter */}
+        {usage && <UsageMeter u={usage} onSubscribe={subscribe} />}
 
         {/* Account & Trade Detail */}
         <section className="card">
