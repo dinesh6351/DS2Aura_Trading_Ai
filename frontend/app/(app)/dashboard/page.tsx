@@ -5,7 +5,7 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { api, openRealtime, getApiBase } from '@/lib/api';
-import { CHANNELS, BILLING, centsToUsd, TradingMode, PROFIT_TAKE_CAP } from '@platform/shared';
+import { CHANNELS, BILLING, centsToUsd, TradingMode, PROFIT_TAKE_CAP, TAKER_FEE_RATE } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
 
 interface Account { totalBalance: number; availableBalance: number; marginUsed: number; unrealizedPnl: number; openPositions: number; lastSyncedAt: string | null; live?: boolean; }
@@ -209,6 +209,7 @@ export default function Dashboard() {
         <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <LivePortfolioCard account={account} positions={positions} />
           <Card label="Available" value={fmt(account?.availableBalance)} />
+          <Card label="In Trade (margin)" value={fmt(account?.marginUsed)} />
           <Card label="Unrealized P&L" value={fmt(account?.unrealizedPnl)} signed />
           <Card label="Today P&L" value={fmt(stats?.todayProfit)} signed />
           <Card label="ROI" value={`${stats?.roi ?? 0}%`} />
@@ -1115,15 +1116,17 @@ function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: st
 }
 function TradeReasonCard({ t }: { t: TradeReason }) {
   const gross = num(t.grossPnl);         // price-move P&L (before fees)
-  const fee = num(t.realFee);            // actual Binance commission (negative), 0 if not available
   const funding = num(t.funding);        // actual funding (±), 0 if none
-  const actual = gross + fee + funding;  // true after-fee P&L
   const qty = num(t.quantity);
   const entry = num(t.entryPrice);
   const exit = num(t.exitPrice);
   const entryVal = entry * qty;          // notional in at entry
   const exitVal = exit * qty;            // notional out at exit
   const margin = t.leverage ? entryVal / t.leverage : 0;
+  // Actual Binance fee (matched from income) if available; else the round-trip taker
+  // estimate. Always shown as a negative deduction and folded into Actual P&L.
+  const fee = num(t.realFee) !== 0 ? num(t.realFee) : -(entryVal + exitVal) * TAKER_FEE_RATE;
+  const actual = gross + fee + funding;  // true after-fee P&L
   const dur = t.durationSec == null ? '—'
     : t.durationSec >= 3600 ? `${(t.durationSec / 3600).toFixed(1)}h` : `${Math.round(t.durationSec / 60)}m`;
   return (
@@ -1140,7 +1143,7 @@ function TradeReasonCard({ t }: { t: TradeReason }) {
         <span className="text-muted">Exit value</span><span className="text-right">${exitVal.toFixed(2)}</span>
         <span className="text-muted">Qty · Margin</span><span className="text-right">{qty} · ${margin.toFixed(2)}</span>
         <span className="text-muted">P&L (price)</span><span className={`text-right ${gross >= 0 ? 'text-accent' : 'text-danger'}`}>{gross >= 0 ? '+' : ''}${gross.toFixed(3)}</span>
-        <span className="text-muted">Binance fee</span><span className="text-right text-danger">{fee === 0 ? '—' : `-$${Math.abs(fee).toFixed(3)}`}</span>
+        <span className="text-muted">Binance fee</span><span className="text-right text-danger">-${Math.abs(fee).toFixed(3)}</span>
         {funding !== 0 && (<><span className="text-muted">Funding</span><span className={`text-right ${funding >= 0 ? 'text-accent' : 'text-danger'}`}>{funding >= 0 ? '+' : ''}${funding.toFixed(3)}</span></>)}
         <span className="text-muted font-bold">Actual P&L</span><span className={`text-right font-bold ${actual >= 0 ? 'badge-up' : 'badge-down'}`}>{actual >= 0 ? '+' : ''}${actual.toFixed(3)}</span>
       </div>
