@@ -276,7 +276,7 @@ export async function signalsOverview(symbols: string[], cfg: BotConfig | null, 
       const trend = snap == null ? 'n/a'
         : snap.ema8 > snap.ema20 && snap.ema20 > snap.ema50 ? 'up'
         : snap.ema8 < snap.ema20 && snap.ema20 < snap.ema50 ? 'down' : 'mixed';
-      const topFail = [...sig.conditions].filter((c) => !c.pass && !c.critical).sort((a, b) => b.weight - a.weight)[0];
+      const topFail = [...sig.conditions].filter((c) => c.active && !c.pass && !c.critical).sort((a, b) => b.weight - a.weight)[0];
       const blocking = sig.bias === 'none' ? 'No directional bias (price between VWAP/EMA8)'
         : sig.criticalFails[0] ?? (sig.allPass ? '— would trade' : topFail?.label ?? 'Below score threshold');
       return {

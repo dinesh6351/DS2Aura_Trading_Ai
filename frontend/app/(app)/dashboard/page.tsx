@@ -213,7 +213,7 @@ export default function Dashboard() {
           <Card label="Available" value={fmt(account?.availableBalance)} />
           <Card label="In Trade (margin)" value={fmt(account?.marginUsed)} />
           <Card label="Unrealized P&L" value={fmt(account?.unrealizedPnl)} signed />
-          <Card label="Today P&L" value={fmt(stats?.todayProfit)} signed />
+          <Card label="Today P&L" value={fmt(d.todayPnl)} signed />
           <Card label="ROI" value={`${stats?.roi ?? 0}%`} />
           <Card label="Realized 7D" value={fmt(d.realized7d)} signed />
           <Card label="Profit Factor" value={d.profitFactor} />

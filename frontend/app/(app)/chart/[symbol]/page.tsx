@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
 
-interface Cond { label: string; pass: boolean; weight: number; critical: boolean; }
+interface Cond { label: string; pass: boolean; weight: number; critical: boolean; active: boolean; }
 interface PivotLevel { label: string; price: number; dist: number; }
 interface ChartDetail {
   symbol: string;
@@ -125,7 +125,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
                 <Row k="Price" v={snap.price} /><Row k="Strength" v={<span className={snap.adx > 25 ? 'badge-up' : 'text-warn'}>{snap.adx > 25 ? 'STRONG' : 'WEAK'}</span>} />
                 <Row k="Vol×" v={snap.volRatio} /><Row k="ATR%" v={`${snap.atrPct}%`} />
                 <Row k="Trend" v={snap.ema8 > snap.ema50 ? 'UP' : snap.ema8 < snap.ema50 ? 'DOWN' : 'SIDEWAYS'} /><Row k="ADX" v={snap.adx} />
-                <Row k="Conditions" v={sig ? `${sig.conditions.filter((c) => c.pass && !c.critical).length}/${sig.conditions.filter((c) => !c.critical).length}` : '0/0'} />
+                <Row k="Conditions" v={sig ? `${sig.conditions.filter((c) => c.active && c.pass && !c.critical).length}/${sig.conditions.filter((c) => c.active && !c.critical).length}` : '0/0'} />
                 <Row k="vs VWAP" v={`${snap.distFromVwapPct}%`} />
                 <div className="col-span-2 border-t border-green-900/20 mt-1 pt-1 text-xs text-muted">Confidence {sig?.score ?? 0}/100 · threshold {sig?.threshold ?? 80}</div>
               </div>
@@ -182,16 +182,19 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
             <p className="label">🎯 Signal Conditions ({symbol})</p>
             {sig && <span className="text-sm">Score <b className={sig.allPass ? 'badge-up' : 'text-warn'}>{sig.score}</b>/{sig.threshold} · {sig.allPass ? <span className="badge-up">✅ TRADE</span> : <span className="text-muted">🚫 BLOCKED</span>}</span>}
           </div>
-          {sig && sig.bias !== 'none' ? (
-            <div className="grid sm:grid-cols-2 gap-x-6 text-sm">
-              {sig.conditions.map((c, i) => (
-                <div key={i} className="flex justify-between border-t border-green-900/20 py-1">
-                  <span className={c.critical ? 'text-warn' : ''}>{c.pass ? '✅' : '🚫'} {c.label}{c.critical && ' (gate)'}</span>
-                  <span className="text-muted">{c.critical ? 'CRIT' : `${c.weight}pt`}</span>
-                </div>
-              ))}
-            </div>
-          ) : <Empty>No directional bias right now — conditions score only on a LONG/SHORT setup.</Empty>}
+          {sig && sig.conditions.length ? (
+            <>
+              {sig.bias === 'none' && <p className="text-muted text-xs mb-2">No directional bias yet — the full strategy checklist below scores once price sets a LONG/SHORT bias. ⚪ = not scoring now (no bias, filter off, or no data).</p>}
+              <div className="grid sm:grid-cols-2 gap-x-6 text-sm">
+                {sig.conditions.map((c, i) => (
+                  <div key={i} className={`flex justify-between border-t border-green-900/20 py-1 ${c.active ? '' : 'opacity-50'}`}>
+                    <span className={c.critical ? 'text-warn' : ''}>{!c.active ? '⚪' : c.pass ? '✅' : '🚫'} {c.label}{c.critical && ' (gate)'}</span>
+                    <span className="text-muted">{!c.active ? 'off' : c.critical ? 'CRIT' : `${c.weight}pt`}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : <Empty>Computing the strategy checklist…</Empty>}
         </section>
 
         {/* Key Technical Indicators | Support & Resistance */}
