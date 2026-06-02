@@ -463,15 +463,20 @@ export default function Dashboard() {
             </div>
             {trades.length === 0 ? <Empty>No trades yet</Empty> : (
               <table className="w-full text-sm">
-                <thead><tr className="text-muted text-xs"><th className="text-left">Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Net P&L</th><th>Reason</th></tr></thead>
-                <tbody>{trades.slice(0, 20).map((t) => (
+                <thead><tr className="text-muted text-xs"><th className="text-left">Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Net P&L</th><th>Actual</th><th>Reason</th></tr></thead>
+                <tbody>{trades.slice(0, 20).map((t) => {
+                  // Actual = price P&L − real Binance fee (matched, else taker estimate) ± funding.
+                  const fee = num(t.realFee) !== 0 ? num(t.realFee) : -(num(t.entryPrice) + num(t.exitPrice)) * num(t.quantity) * TAKER_FEE_RATE;
+                  const actual = num(t.netPnl) + fee + num(t.funding);
+                  return (
                   <tr key={t.id} className="border-t border-green-900/30">
                     <td className="text-xs text-muted">{new Date(t.closedAt).toLocaleString()}</td>
                     <td>{t.symbol}</td><td className="text-center"><span className={t.side === 'LONG' ? 'badge-up' : 'badge-down'}>{t.side}</span></td>
                     <td className="text-center text-xs">{num(t.quantity)}</td>
                     <td className={`text-center ${num(t.netPnl) >= 0 ? 'badge-up' : 'badge-down'}`}>{num(t.netPnl).toFixed(3)}</td>
+                    <td className={`text-center font-bold ${actual >= 0 ? 'badge-up' : 'badge-down'}`} title="After Binance fees & funding">{actual.toFixed(3)}</td>
                     <td className="text-center text-xs">{t.exitReason}</td>
-                  </tr>))}</tbody>
+                  </tr>); })}</tbody>
               </table>
             )}
           </div>
