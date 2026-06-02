@@ -17,7 +17,7 @@ interface BotCfg {
   dynamicSizing?: boolean; marginGuardPct?: number; consecutiveLosses?: number;
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean;
   useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean; pausedReason: string | null;
-  useAdaptiveLearning?: boolean;
+  useAdaptiveLearning?: boolean; paperTrading?: boolean;
 }
 interface Position { id: string; symbol: string; side: string; entryPrice: string; markPrice: string; quantity: string; leverage: number; stopLoss: string | null; takeProfit: string | null; unrealizedPnl: string; entryScore: number | null; }
 interface SignalRow {
@@ -115,6 +115,13 @@ export default function Dashboard() {
 
   async function subscribe(plan: 'BASIC' | 'PRO' = 'BASIC') { await api.post('/api/billing/subscribe', { plan }); await load(); }
   async function botAction(action: 'start' | 'pause' | 'stop') { await api.post(`/api/bot/${action}`).catch((e) => alert((e as Error).message)); await load(); }
+  async function setPaperMode(paper: boolean) {
+    if (paper === bot?.paperTrading) return; // already in that mode
+    // Real funds at stake → confirm before going Live. Paper is safe, no prompt.
+    if (!paper && !confirm('Switch to LIVE trading? New trades will use REAL funds on your connected Binance account.')) return;
+    try { await api.patch('/api/bot/config', { paperTrading: paper }); await load(); }
+    catch (e) { alert((e as Error).message); } // e.g. "Close all open positions before switching…"
+  }
   async function openDetail(symbol: string) { const trips = await api.get<Trip[]>(`/api/trading/trade-detail?symbol=${symbol}`); setDetail({ symbol, trips }); }
   async function refreshAll() { setRefreshing(true); try { await Promise.all([load(), loadSignals()]); } finally { setRefreshing(false); } }
 
@@ -159,6 +166,7 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <ModeToggle paper={bot?.paperTrading} onSet={setPaperMode} />
             <button className="btn text-xs" disabled={refreshing} onClick={refreshAll}>{refreshing ? '…' : '↻ Refresh'}</button>
             <span className={`label ${bot?.status === 'RUNNING' ? 'text-accent' : 'text-muted'}`}>BOT: {bot?.status ?? '…'} · {bot?.mode}</span>
             <button className="btn" onClick={() => botAction('start')}>Start</button>
@@ -680,6 +688,28 @@ function coinAnalysis(c: Perf): string {
   if (c.netPnl > 0) return `Net positive (+$${c.netPnl.toFixed(2)}) despite a ${c.winRate}% win rate — winners are larger than losers (good R:R). Sustainable if R:R holds.`;
   if (c.netPnl < 0 && c.winRate < 40) return `Weak: ${l}/${c.trades} losses, ${c.netPnl.toFixed(2)}. Low win rate suggests this coin's setups are fighting the trend — tighten its filter or pause it.`;
   return `Roughly break-even (${c.netPnl.toFixed(2)}, ${c.winRate}% win). Needs more samples before judging; the stop is containing the losers.`;
+}
+
+/**
+ * Live ⇄ Paper trading switch. Paper = simulated (no real orders); Live = real
+ * funds on the connected Binance account. The backend rejects a switch while any
+ * position is open (the watchdog branches on this flag), surfaced via the catch
+ * in setPaperMode. Distinct from the "● LIVE / ○ cached" data-freshness badge.
+ */
+function ModeToggle({ paper, onSet }: { paper?: boolean; onSet: (paper: boolean) => void }) {
+  return (
+    <span className="inline-flex items-center rounded border border-green-900/40 overflow-hidden text-xs"
+      title="Switch between Paper (simulated) and Live (real-money) trading. Close open positions first.">
+      <button type="button" onClick={() => onSet(true)}
+        className={`px-2 py-1 font-bold transition ${paper ? 'bg-warn/30 text-warn' : 'text-muted hover:text-green-100'}`}>
+        🧪 Paper
+      </button>
+      <button type="button" onClick={() => onSet(false)}
+        className={`px-2 py-1 font-bold transition ${paper === false ? 'bg-danger/30 text-danger' : 'text-muted hover:text-green-100'}`}>
+        💵 Live
+      </button>
+    </span>
+  );
 }
 
 /** Self-ticking "Xs/Xm ago" — isolated so it re-renders alone, not the dashboard. */
