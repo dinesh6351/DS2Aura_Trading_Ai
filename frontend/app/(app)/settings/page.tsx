@@ -12,7 +12,7 @@ interface BotCfg {
   status: string; mode: string; paperTrading: boolean; telegramEnabled: boolean; telegramChatId: string | null;
   scoreThreshold: number; leverage: number; marginPerTradeUsd: string; slPercent: string; tpRR: string; trailArmPct?: string; trailGapPct?: string;
   maxConcurrentPositions: number; maxTradesPerDay: number; maxConsecutiveLosses: number; lossCooldownMin: number; marginGuardPct: number;
-  useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean;
+  useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean; useAdaptiveLearning?: boolean;
 }
 
 type Tab = 'basic' | 'setup' | 'coupon' | 'password';
@@ -510,6 +510,20 @@ function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watch
           <Toggle label="Trailing stop" on={toggles.useTrailingStop} onClick={tog('useTrailingStop')} />
         </div>
       </div>
+
+      {/* Adaptive learning (opt-in) — toggles immediately */}
+      <label className="flex items-start gap-2 text-sm border-t border-green-900/20 pt-3">
+        <input type="checkbox" className="mt-1" checked={!!bot.useAdaptiveLearning}
+          onChange={async (e) => {
+            setErr('');
+            try { await api.patch('/api/bot/config', { useAdaptiveLearning: e.target.checked }); setNote(`Adaptive learning ${e.target.checked ? 'ON' : 'OFF'}`); onChange(); setTimeout(() => setNote(''), 2500); }
+            catch (e2) { setErr((e2 as Error).message); }
+          }} />
+        <span>
+          <b>🧪 Adaptive learning</b> <span className="text-muted text-xs">(opt-in)</span>
+          <span className="block text-muted text-xs">Tunes the score bar per coin from your own closed-trade results — pickier on losers, looser on proven winners, and pauses coins that keep losing. Never changes leverage or size. Test in Paper first.</span>
+        </span>
+      </label>
 
       {/* Watchlist */}
       <div>

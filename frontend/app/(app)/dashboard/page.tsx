@@ -5,7 +5,7 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { api, openRealtime, getApiBase } from '@/lib/api';
-import { CHANNELS, BILLING, centsToUsd, TradingMode, PROFIT_TAKE_CAP, TAKER_FEE_RATE } from '@platform/shared';
+import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
 
 interface Account { totalBalance: number; availableBalance: number; marginUsed: number; unrealizedPnl: number; openPositions: number; lastSyncedAt: string | null; live?: boolean; }
@@ -532,22 +532,19 @@ export default function Dashboard() {
         {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
         <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
 
-        {/* Bot settings + activity log */}
-        <section className="grid md:grid-cols-2 gap-6">
-          {bot && <BotSettings bot={bot} watchlist={watchlist} onSaved={load} />}
-          <div className="card">
-            <p className="label mb-2">📜 Bot Activity Log</p>
-            {log.length === 0 ? <Empty>No activity yet</Empty> : (
-              <div className="space-y-1 max-h-72 overflow-auto text-sm">
-                {log.map((l) => (
-                  <div key={l.id} className="border-t border-green-900/20 py-1">
-                    <span className="text-accent">{l.title}</span> <span className="text-muted text-xs">· {new Date(l.createdAt).toLocaleTimeString()}</span>
-                    <p className="text-muted text-xs">{l.body}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {/* Bot Activity Log (the full settings editor lives in Profile → Setup) */}
+        <section className="card">
+          <p className="label mb-2">📜 Bot Activity Log</p>
+          {log.length === 0 ? <Empty>No activity yet</Empty> : (
+            <div className="space-y-1 max-h-72 overflow-auto text-sm">
+              {log.map((l) => (
+                <div key={l.id} className="border-t border-green-900/20 py-1">
+                  <span className="text-accent">{l.title}</span> <span className="text-muted text-xs">· {new Date(l.createdAt).toLocaleTimeString()}</span>
+                  <p className="text-muted text-xs">{l.body}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </main>
 
@@ -1257,67 +1254,8 @@ function AdaptiveLearningCard({ enabled }: { enabled?: boolean }) {
   );
 }
 
-/** Editable bot settings: mode preset + key risk config + watchlist. */
-function BotSettings({ bot, watchlist, onSaved }: { bot: BotCfg; watchlist: string[]; onSaved: () => void }) {
-  const [cfg, setCfg] = useState({
-    scoreThreshold: bot.scoreThreshold, leverage: bot.leverage,
-    marginPerTradeUsd: Number(bot.marginPerTradeUsd), slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR),
-    trailArmPct: Number(bot.trailArmPct ?? 0.5), trailGapPct: Number(bot.trailGapPct ?? 0.5),
-    maxConcurrentPositions: bot.maxConcurrentPositions, maxTradesPerDay: bot.maxTradesPerDay,
-  });
-  const [wl, setWl] = useState(watchlist.join(', '));
-  const [note, setNote] = useState('');
-  const set = (k: keyof typeof cfg) => (e: React.ChangeEvent<HTMLInputElement>) => setCfg({ ...cfg, [k]: Number(e.target.value) });
-
-  async function setMode(mode: string) { await api.post('/api/bot/mode', { mode }); setNote(`Mode → ${mode}`); onSaved(); }
-  async function saveCfg() { await api.patch('/api/bot/config', cfg); setNote('Settings saved'); onSaved(); setTimeout(() => setNote(''), 2000); }
-  async function saveWl() {
-    const symbols = wl.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-    await api.put('/api/trading/watchlist', { symbols }); setNote('Watchlist saved'); onSaved(); setTimeout(() => setNote(''), 2000);
-  }
-
-  return (
-    <div className="card space-y-3">
-      <div className="flex items-center justify-between"><p className="label">⚙️ Bot Settings</p>{note && <span className="text-accent text-xs">✅ {note}</span>}</div>
-      <div className="flex gap-2">
-        {Object.values(TradingMode).map((m) => (
-          <button key={m} className={`text-xs flex-1 ${bot.mode === m ? 'btn' : 'btn opacity-60'}`} onClick={() => setMode(m)}>{m}</button>
-        ))}
-      </div>
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        <Num label="Score ≥" v={cfg.scoreThreshold} onChange={set('scoreThreshold')} />
-        <Num label="Leverage" v={cfg.leverage} onChange={set('leverage')} />
-        <Num label="Margin $" v={cfg.marginPerTradeUsd} onChange={set('marginPerTradeUsd')} />
-        <Num label="SL %" v={cfg.slPercent} onChange={set('slPercent')} step="0.1" />
-        <Num label="Arm trailing +%" v={cfg.trailArmPct} onChange={set('trailArmPct')} step="0.1" />
-        <Num label="Trail gap %" v={cfg.trailGapPct} onChange={set('trailGapPct')} step="0.1" />
-        <Num label="TP R:R" v={cfg.tpRR} onChange={set('tpRR')} step="0.1" />
-        <Num label="Max Positions" v={cfg.maxConcurrentPositions} onChange={set('maxConcurrentPositions')} />
-        <Num label="Max Trades/Day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
-      </div>
-      <button className="btn w-full" onClick={saveCfg}>Save settings</button>
-      <label className="flex items-start gap-2 text-sm border-t border-green-900/20 pt-3">
-        <input type="checkbox" className="mt-1" checked={!!bot.useAdaptiveLearning}
-          onChange={async (e) => {
-            await api.patch('/api/bot/config', { useAdaptiveLearning: e.target.checked });
-            setNote(`Adaptive learning ${e.target.checked ? 'ON' : 'OFF'}`); onSaved(); setTimeout(() => setNote(''), 2000);
-          }} />
-        <span>
-          <b>🧪 Adaptive learning</b> <span className="text-muted text-xs">(opt-in)</span>
-          <span className="block text-muted text-xs">Tunes the score bar per coin from your own closed-trade results — pickier on losers, looser on proven winners, and pauses coins that keep losing. Never changes leverage or size. Test in Paper first.</span>
-        </span>
-      </label>
-      <div>
-        <p className="label mb-1">Watchlist (comma-separated)</p>
-        <textarea className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
-        <button className="btn w-full mt-1" onClick={saveWl}>Save watchlist</button>
-      </div>
-    </div>
-  );
-}
-function Num({ label, v, onChange, step }: { label: string; v: number; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; step?: string }) {
-  return <label className="block"><span className="label">{label}</span><input type="number" step={step} value={v} onChange={onChange} className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 mt-0.5" /></label>;
-}
+// Bot settings now live exclusively in Profile → Setup (the duplicate dashboard
+// editor + its Num helper were removed to avoid two places to change config).
 
 function TradeDetailModal({ symbol, trips, onClose }: { symbol: string; trips: Trip[]; onClose: () => void }) {
   return (
