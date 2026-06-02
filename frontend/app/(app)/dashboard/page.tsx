@@ -221,6 +221,15 @@ export default function Dashboard() {
           <Card label="Open Trades" value={String(account?.openPositions ?? 0)} />
         </section>
 
+        {/* Engine activity stat row — sits right after the portfolio KPIs */}
+        <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <Card label="Decisions (now)" value={String(d.decisions)} />
+          <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
+          <Card label="Blocked (now)" value={String(d.blocked)} />
+          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
+          <Card label="Volume" value={fmt(d.volume)} />
+        </section>
+
         {/* Account & Trade Detail — current settings (kept at top with the KPIs) */}
         <section className="card">
           <p className="label mb-2">⚙️ Account &amp; Trade Detail — current settings</p>
@@ -353,15 +362,6 @@ export default function Dashboard() {
 
         {/* Real Binance account P&L — reconciled from the exchange income feed */}
         <BinancePnlPanel data={bpnl} />
-
-        {/* Engine activity stat row */}
-        <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card label="Decisions (now)" value={String(d.decisions)} />
-          <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
-          <Card label="Blocked (now)" value={String(d.blocked)} />
-          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
-          <Card label="Volume" value={fmt(d.volume)} />
-        </section>
 
         {/* Market status + Equity curve */}
         <section className="grid md:grid-cols-2 gap-6">
