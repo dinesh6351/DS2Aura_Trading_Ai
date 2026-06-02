@@ -31,7 +31,7 @@ interface Usage {
   remainingIncludedTrades: number; overageTrades: number; estimatedInvoiceUsd: number;
   monthlyPriceUsd: number; overagePerTradeUsd: number; nextBillingDate: string | null;
   trialEndsAt: string | null; inTrial: boolean; canTrade: boolean; viewOnly: boolean;
-  unlimited?: boolean; billingInterval?: string; planPriceUsd?: number; renewalDate?: string | null;
+  unlimited?: boolean; unlimitedTrades?: boolean; billingInterval?: string; planPriceUsd?: number; renewalDate?: string | null;
 }
 interface Market { btcTrend: string; verdict: string; fearGreed: { value: number; label: string }; btcAtrPct: number; btcPrice?: number; }
 interface Trade {
@@ -106,7 +106,7 @@ export default function Dashboard() {
       api.get<Account>('/api/trading/account').catch(() => undefined),
       api.get<Stats>('/api/trading/stats').catch(() => undefined),
       api.get<BotCfg>('/api/bot/status').catch(() => undefined),
-      api.get<Position[]>('/api/trading/positions').catch(() => [] as Position[]),
+      api.get<Position[]>('/api/trading/positions').catch(() => undefined),
       api.get<Usage>('/api/billing/usage').catch(() => undefined),
       api.get<Market>('/api/trading/market-status').catch(() => undefined),
       api.get<Trade[]>('/api/trading/trades').catch(() => [] as Trade[]),
@@ -115,8 +115,11 @@ export default function Dashboard() {
       api.get<string[]>('/api/trading/watchlist').catch(() => [] as string[]),
       api.get<BinancePnl>('/api/trading/binance-pnl').catch(() => undefined),
     ]);
+    // Positions: only overwrite on a SUCCESSFUL response ([] is a valid "no positions").
+    // On a fetch error (p === undefined) keep the last known list so an open trade
+    // never flickers to "No open positions" on a transient hiccup.
     if (a) setAccount(a); if (s) setStats(s); if (b) setBot(b);
-    setPositions(p); if (u) setUsage(u); if (mk) setMarket(mk);
+    if (p) setPositions(p); if (u) setUsage(u); if (mk) setMarket(mk);
     setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl); if (bp) setBpnl(bp);
     setLastLoad(Date.now());
   }, []);
@@ -353,13 +356,12 @@ export default function Dashboard() {
         <BinancePnlPanel data={bpnl} />
 
         {/* Engine activity stat row */}
-        <section className="grid grid-cols-2 md:grid-cols-6 gap-4">
+        <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card label="Decisions (now)" value={String(d.decisions)} />
           <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
           <Card label="Blocked (now)" value={String(d.blocked)} />
           <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
           <Card label="Volume" value={fmt(d.volume)} />
-          <Card label="Est. Fees" value={fmt(d.fees)} />
         </section>
 
         {/* Market status + Equity curve */}
@@ -440,7 +442,7 @@ export default function Dashboard() {
 
         {/* Today's trades — per-trade reasoning */}
         <section>
-          <p className="label mb-2">📋 Today&apos;s trades — entry/exit value, Binance fee &amp; net P&amp;L per trade</p>
+          <p className="label mb-2">📋 Today&apos;s trades — entry/exit value &amp; P&amp;L per trade</p>
           {d.todayTrades.length === 0 ? (
             <div className="card"><Empty>No trades closed today yet. The quality bar (score ≥ {bot?.scoreThreshold ?? 85}) keeps the bot patient.</Empty></div>
           ) : (
@@ -448,7 +450,7 @@ export default function Dashboard() {
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {d.todayTrades.slice(0, 12).map((t) => <TradeReasonCard key={t.id} t={t} />)}
               </div>
-              <p className="text-xs text-muted mt-2">{d.todayTradesFooter} Fees shown are the estimated round-trip taker fee; your exact Binance fees &amp; funding (hidden charges) are in the “Real Binance P&amp;L” card above.</p>
+              <p className="text-xs text-muted mt-2">{d.todayTradesFooter}</p>
             </>
           )}
         </section>
@@ -1080,8 +1082,6 @@ function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: st
 }
 function TradeReasonCard({ t }: { t: TradeReason }) {
   const net = num(t.netPnl);
-  const gross = num(t.grossPnl);
-  const fee = num(t.feeUsd);
   const qty = num(t.quantity);
   const entry = num(t.entryPrice);
   const exit = num(t.exitPrice);
@@ -1103,9 +1103,7 @@ function TradeReasonCard({ t }: { t: TradeReason }) {
         <span className="text-muted">Entry value</span><span className="text-right">${entryVal.toFixed(2)}</span>
         <span className="text-muted">Exit value</span><span className="text-right">${exitVal.toFixed(2)}</span>
         <span className="text-muted">Qty · Margin</span><span className="text-right">{qty} · ${margin.toFixed(2)}</span>
-        <span className="text-muted">Gross P&L</span><span className={`text-right ${gross >= 0 ? 'text-accent' : 'text-danger'}`}>{gross >= 0 ? '+' : ''}${gross.toFixed(3)}</span>
-        <span className="text-muted">Binance fee (est.)</span><span className="text-right text-danger">-${fee.toFixed(3)}</span>
-        <span className="text-muted font-bold">Net P&L</span><span className={`text-right font-bold ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
+        <span className="text-muted font-bold">P&L</span><span className={`text-right font-bold ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
       </div>
       <p className="text-xs text-muted mt-1.5 border-t border-green-900/20 pt-1.5">
         {t.exitReason} · {dur}{t.rr ? ` · R:R ${num(t.rr).toFixed(1)}` : ''} · {new Date(t.closedAt).toLocaleTimeString()}
@@ -1304,8 +1302,8 @@ function UsageMeter({ u, onSubscribe }: { u: Usage; onSubscribe: (plan: 'BASIC' 
       </section>
     );
   }
-  const pct = Math.min(100, Math.round((u.tradesUsed / Math.max(1, u.includedTrades)) * 100));
-  const over = u.overageTrades > 0;
+  const unlimited = !!u.unlimitedTrades;
+  const pct = unlimited ? 100 : Math.min(100, Math.round((u.tradesUsed / Math.max(1, u.includedTrades)) * 100));
   const date = (dt: string | null) => (dt ? new Date(dt).toLocaleDateString() : '—');
   return (
     <section className="card space-y-3">
@@ -1315,16 +1313,16 @@ function UsageMeter({ u, onSubscribe }: { u: Usage; onSubscribe: (plan: 'BASIC' 
       </div>
       <div>
         <div className="flex justify-between text-sm mb-1">
-          <span className="text-muted">Trades Used This Month</span>
-          <span className={over ? 'text-warn' : 'text-green-100'}>{u.tradesUsed}/{u.includedTrades}{over && ` (+${u.overageTrades} overage)`}</span>
+          <span className="text-muted">Trades This Month</span>
+          <span className="text-green-100">{u.tradesUsed}{unlimited ? ' · Unlimited' : `/${u.includedTrades}`}</span>
         </div>
-        <div className="h-2 bg-bg rounded overflow-hidden border border-green-900/40"><div className={`h-full ${over ? 'bg-warn' : 'bg-accent'}`} style={{ width: `${pct}%` }} /></div>
+        {!unlimited && <div className="h-2 bg-bg rounded overflow-hidden border border-green-900/40"><div className="h-full bg-accent" style={{ width: `${pct}%` }} /></div>}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-        <Meter label="Remaining Included" value={`${u.remainingIncludedTrades}`} />
+        <Meter label="Trades" value={unlimited ? 'Unlimited' : `${u.remainingIncludedTrades} left`} />
         <Meter label={u.inTrial ? 'Est. Invoice' : 'Est. Next Invoice'} value={u.inTrial ? 'Free (trial)' : `$${u.estimatedInvoiceUsd.toFixed(2)}`} />
-        <Meter label={u.inTrial ? 'Trial Ends' : 'Usage Resets'} value={date(u.inTrial ? u.trialEndsAt : u.nextBillingDate)} />
-        <Meter label={u.billingInterval === 'YEAR' ? 'Renews (yearly)' : 'Overage Rate'} value={u.billingInterval === 'YEAR' ? date(u.renewalDate ?? null) : `$${u.overagePerTradeUsd.toFixed(2)}/trade`} />
+        <Meter label={u.inTrial ? 'Trial Ends' : 'Renews'} value={date(u.inTrial ? u.trialEndsAt : (u.renewalDate ?? u.nextBillingDate))} />
+        <Meter label="Plan" value={u.billingInterval === 'YEAR' ? `$${(u.planPriceUsd ?? 0).toFixed(0)}/yr` : `$${u.monthlyPriceUsd.toFixed(2)}/mo`} />
       </div>
       {(u.inTrial || u.viewOnly) && (
         <div className="flex flex-wrap gap-2">

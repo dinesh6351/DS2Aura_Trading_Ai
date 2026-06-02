@@ -110,11 +110,11 @@ export const billingService = {
       };
     }
     const used = sub.tradesThisPeriod;
-    const remaining = Math.max(0, sub.includedTrades - used);
-    const overage = Math.max(0, used - sub.includedTrades);
     const discountPct = sub.nextInvoiceDiscountPct;
     const baseAfter = discountPct > 0 ? Math.round(sub.monthlyPriceCents * (100 - discountPct) / 100) : sub.monthlyPriceCents;
-    const estCents = baseAfter + overage * sub.overageCents; // monthly invoice (coupon discounts the base, not overage)
+    // Per-trade overage fee removed — trades are UNLIMITED on the plan. Only the
+    // subscription base is billed (still discountable by a coupon).
+    const estCents = baseAfter;
     const inTrial = sub.status === SubscriptionStatus.TRIALING;
     const info = PLAN_INFO[sub.plan as keyof typeof PLAN_INFO] ?? PLAN_INFO.BASIC;
     return {
@@ -122,14 +122,15 @@ export const billingService = {
       status: sub.status,
       billingInterval: sub.billingInterval,            // MONTH | YEAR
       tradesUsed: used,
-      includedTrades: sub.includedTrades,              // per month
-      remainingIncludedTrades: remaining,
-      overageTrades: overage,
-      estimatedInvoiceUsd: inTrial ? 0 : centsToUsd(estCents), // next monthly (overage) invoice
+      includedTrades: sub.includedTrades,              // shown for reference; not a billing cap anymore
+      remainingIncludedTrades: 0,
+      overageTrades: 0,
+      estimatedInvoiceUsd: inTrial ? 0 : centsToUsd(estCents), // next invoice = subscription only
       monthlyPriceUsd: centsToUsd(sub.monthlyPriceCents),
       planPriceUsd: centsToUsd(info.termCents),        // 10 (BASIC/mo) or 100 (PRO/yr)
-      overagePerTradeUsd: centsToUsd(sub.overageCents),
-      nextBillingDate: sub.currentPeriodEnd,           // monthly usage/overage cycle end
+      overagePerTradeUsd: 0,                           // no per-trade fee
+      unlimitedTrades: true,                           // trades are unlimited on the plan
+      nextBillingDate: sub.currentPeriodEnd,           // monthly billing cycle end
       renewalDate: sub.paidUntil,                      // when the paid term renews (annual for PRO)
       trialEndsAt: sub.trialEndsAt,
       inTrial,
@@ -192,15 +193,14 @@ export const billingService = {
     const sub = await prisma.subscription.findUniqueOrThrow({ where: { userId } });
     if (!sub.currentPeriodStart || !sub.currentPeriodEnd) return null;
 
-    const overage = Math.max(0, sub.tradesThisPeriod - sub.includedTrades);
-    const overageCents = overage * sub.overageCents;
+    const overage = Math.max(0, sub.tradesThisPeriod - sub.includedTrades); // informational only
     const wasTrial = sub.status === SubscriptionStatus.TRIALING;
     const discountPct = sub.nextInvoiceDiscountPct;
-    // One-time coupon discounts the subscription BASE (not metered overage), keeping
-    // base + overage = total. Trial periods are free regardless.
+    // Per-trade overage fee removed — trades are unlimited; bill ONLY the subscription
+    // base (coupon-discountable). Trial periods are free regardless.
     const baseCents = wasTrial ? 0
       : (discountPct > 0 ? Math.round(sub.monthlyPriceCents * (100 - discountPct) / 100) : sub.monthlyPriceCents);
-    const billedOverage = wasTrial ? 0 : overageCents;
+    const billedOverage = 0;
     const totalCents = baseCents + billedOverage;
 
     const now = new Date();

@@ -1,5 +1,5 @@
 import type { BotConfig } from '@prisma/client';
-import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD, TAKER_FEE_RATE } from '@platform/shared';
+import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { BinanceClient, floorToStep, roundToTick, type Candle } from '../binance/binance.client.js';
@@ -441,10 +441,11 @@ async function closePosition(
   const qty = Number(pos.quantity);
   const long = pos.side === 'LONG';
   const grossPnl = (long ? exitPrice - entry : entry - exitPrice) * qty;
-  // Binance taker fee on BOTH legs (entry + exit notional). Subtracting it makes
-  // the recorded P&L match the real wallet instead of a thin paper "win".
-  const feeUsd = (entry + exitPrice) * qty * TAKER_FEE_RATE;
-  const netPnl = grossPnl - feeUsd;
+  // Binance fee is NOT deducted from the recorded P&L (user preference) — the bot's
+  // P&L reflects the raw price move. The true after-fee wallet is shown separately
+  // in the "Real Binance P&L" dashboard card (sourced from Binance's income feed).
+  const feeUsd = 0;
+  const netPnl = grossPnl;
 
   const trade = await prisma.$transaction(async (tx) => {
     await tx.position.update({
