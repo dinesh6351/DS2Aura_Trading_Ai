@@ -210,7 +210,7 @@ export default function Dashboard() {
 
         {/* Portfolio stat cards (key KPIs) */}
         <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card label="Portfolio Value" value={fmt(account?.totalBalance)} />
+          <LivePortfolioCard account={account} positions={positions} />
           <Card label="Available" value={fmt(account?.availableBalance)} />
           <Card label="Unrealized P&L" value={fmt(account?.unrealizedPnl)} signed />
           <Card label="Today P&L" value={fmt(stats?.todayProfit)} signed />
@@ -1065,6 +1065,34 @@ function ago(iso: string): string {
 function Card({ label, value, signed }: { label: string; value?: string; signed?: boolean }) {
   const neg = signed && value?.includes('-');
   return <div className="card"><p className="label">{label}</p><p className={`stat ${signed ? (neg ? 'badge-down' : 'badge-up') : ''}`}>{value ?? '…'}</p></div>;
+}
+
+/**
+ * Portfolio Value as LIVE equity = Binance wallet balance + live unrealized P&L,
+ * ticking per-second from the price feed — so it actually moves while a trade is
+ * open (the raw wallet balance only changes when a trade closes).
+ */
+function LivePortfolioCard({ account, positions }: { account?: Account; positions: Position[] }) {
+  const prices = useLivePrices(positions.map((p) => p.symbol));
+  const base = account?.totalBalance ?? 0;
+  const unreal = positions.reduce((s, p) => {
+    const long = p.side === 'LONG';
+    const entry = num(p.entryPrice);
+    const mark = prices[p.symbol] ?? num(p.markPrice);
+    return s + (long ? mark - entry : entry - mark) * num(p.quantity);
+  }, 0);
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <p className="label">Portfolio Value</p>
+        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+      </div>
+      <p className="stat">{account ? fmt(base + unreal) : '…'}</p>
+      {positions.length > 0 && (
+        <p className={`text-xs ${unreal >= 0 ? 'text-accent' : 'text-danger'}`}>{unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} unrealized</p>
+      )}
+    </div>
+  );
 }
 function MiniStat({ label, value, sub, signed }: { label: string; value: string; sub?: string; signed?: boolean }) {
   const neg = signed && value.includes('-');
