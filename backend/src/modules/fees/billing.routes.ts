@@ -5,6 +5,7 @@ import { authenticate, type AuthedRequest } from '../../middleware/auth.js';
 import { ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
 import { billingService } from './billing.service.js';
+import { couponService } from '../coupons/coupons.service.js';
 
 export const billingRouter = Router();
 billingRouter.use(authenticate);
@@ -26,4 +27,13 @@ billingRouter.get('/invoices', asyncHandler(async (req, res) => ok(res, await bi
 billingRouter.post('/subscribe', asyncHandler(async (req, res) => {
   const plan = z.object({ plan: z.enum(['BASIC', 'PRO']).default('BASIC') }).parse(req.body ?? {}).plan;
   return ok(res, await billingService.subscribe(uid(req), plan));
+}));
+
+/** GET /api/billing/coupon — this user's pending one-time discount + redemption history. */
+billingRouter.get('/coupon', asyncHandler(async (req, res) => ok(res, await couponService.myStatus(uid(req)))));
+
+/** POST /api/billing/coupon/redeem {code} — redeem a coupon code. */
+billingRouter.post('/coupon/redeem', asyncHandler(async (req, res) => {
+  const code = z.object({ code: z.string().min(1).max(40) }).parse(req.body).code;
+  return ok(res, await couponService.redeem(uid(req), code));
 }));

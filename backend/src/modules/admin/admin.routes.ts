@@ -7,6 +7,7 @@ import { requireRole, requireStaff } from '../../middleware/rbac.js';
 import { ok } from '../../lib/http.js';
 import { adminService } from './admin.service.js';
 import { settingsService } from '../settings/settings.service.js';
+import { couponService } from '../coupons/coupons.service.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate, requireStaff); // ADMIN/MANAGER/SUPPORT only (ADMIN passes all)
@@ -99,4 +100,29 @@ adminRouter.put('/settings/branding', requireRole(Role.ADMIN), asyncHandler(asyn
 adminRouter.post('/broadcast', mutate, asyncHandler(async (req, res) => {
   const { title, body } = z.object({ title: z.string().min(1), body: z.string().min(1) }).parse(req.body);
   return ok(res, await adminService.broadcast(adminId(req), title, body));
+}));
+
+// ── Coupons (create codes / direct-grant discounts) ─────────────────────────
+adminRouter.get('/coupons', asyncHandler(async (_req, res) => ok(res, await couponService.adminList())));
+
+adminRouter.post('/coupons', mutate, asyncHandler(async (req, res) => {
+  const input = z.object({
+    code: z.string().max(40).optional(),
+    discountPercent: z.coerce.number().min(1).max(100),
+    note: z.string().max(200).optional(),
+    expiresAt: z.string().optional(),
+    maxRedemptions: z.coerce.number().min(1).max(1_000_000).optional(),
+  }).parse(req.body);
+  return ok(res, await couponService.adminCreate(adminId(req), input), 201);
+}));
+
+adminRouter.post('/coupons/:id/active', mutate, asyncHandler(async (req, res) => {
+  const active = z.object({ active: z.boolean() }).parse(req.body).active;
+  return ok(res, await couponService.adminSetActive(adminId(req), req.params.id!, active));
+}));
+
+/** Apply a coupon directly to a user → arms their one-time next-invoice discount. */
+adminRouter.post('/coupons/:id/apply', mutate, asyncHandler(async (req, res) => {
+  const userId = z.object({ userId: z.string().min(1) }).parse(req.body).userId;
+  return ok(res, await couponService.adminApplyToUser(adminId(req), req.params.id!, userId));
 }));

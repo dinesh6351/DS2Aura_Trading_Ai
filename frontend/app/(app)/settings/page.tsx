@@ -142,13 +142,58 @@ function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
   );
 }
 
-// ── Coupon (Phase-1 placeholder; redeem/discount wired in the coupon phase) ────
+// ── Coupon ────────────────────────────────────────────────────────────────────
+interface CouponStatus {
+  nextInvoiceDiscountPct: number;
+  history: { code: string | null; note: string | null; discountPercent: number; source: string; at: string }[];
+}
 function CouponSection() {
+  const [status, setStatus] = useState<CouponStatus>();
+  const [code, setCode] = useState('');
+  const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => { setStatus(await api.get<CouponStatus>('/api/billing/coupon').catch(() => undefined)); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function redeem() {
+    setErr(''); setNote(''); setBusy(true);
+    try {
+      const r = await api.post<{ discountPercent: number }>('/api/billing/coupon/redeem', { code: code.trim() });
+      setNote(r.discountPercent >= 100 ? '✅ Applied — your next invoice is FREE!' : `✅ ${r.discountPercent}% off your next invoice applied.`);
+      setCode(''); load();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  const pct = status?.nextInvoiceDiscountPct ?? 0;
+  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
   return (
-    <section className="card space-y-2">
+    <section className="card space-y-3 max-w-md">
       <p className="label">🎟️ Coupons &amp; discounts</p>
-      <p className="text-muted text-sm">Redeem a coupon code, or see a discount your admin applied to your account. Discounts apply to your next invoice.</p>
-      <p className="text-warn text-xs">Coupon redemption is being activated and will appear here shortly.</p>
+      {pct > 0 ? (
+        <div className="rounded p-3 border border-accent/40 bg-accent/5 text-sm">
+          <p className="text-accent font-bold">{pct >= 100 ? 'Your next invoice is FREE (100% off) 🎉' : `${pct}% off your next invoice`}</p>
+          <p className="text-muted text-xs">Applied automatically to your next billing charge.</p>
+        </div>
+      ) : (
+        <p className="text-muted text-sm">Have a coupon code? Redeem it here — the discount applies to your next invoice.</p>
+      )}
+      <div className="flex gap-2">
+        <input className={inp} placeholder="Coupon code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
+        <button className="btn" disabled={busy || !code.trim()} onClick={redeem}>{busy ? '…' : 'Redeem'}</button>
+      </div>
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+      {!!status?.history.length && (
+        <div className="border-t border-green-900/20 pt-2 text-xs space-y-1">
+          <p className="label">History</p>
+          {status.history.map((h, i) => (
+            <div key={i} className="flex justify-between text-muted">
+              <span>{h.code ?? (h.source === 'ADMIN' ? 'Admin grant' : 'Coupon')} · {h.discountPercent}% off</span>
+              <span>{new Date(h.at).toLocaleDateString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

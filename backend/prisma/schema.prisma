@@ -114,18 +114,18 @@ enum TicketStatus {
 
 // ─── 1. users ────────────────────────────────────────────────────────────
 model User {
-  id                String     @id @default(uuid()) @db.Uuid
-  email             String     @unique
-  passwordHash      String?    // null when using Supabase/Google-only auth
-  role              Role       @default(TRADER)
-  status            UserStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt   DateTime?
-  twoFactorEnabled  Boolean    @default(false)
-  twoFactorSecret   String?    // encrypted TOTP secret
-  supabaseUserId    String?    @unique // link to Supabase Auth if used
-  lastLoginAt       DateTime?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id               String     @id @default(uuid()) @db.Uuid
+  email            String     @unique
+  passwordHash     String? // null when using Supabase/Google-only auth
+  role             Role       @default(TRADER)
+  status           UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt  DateTime?
+  twoFactorEnabled Boolean    @default(false)
+  twoFactorSecret  String? // encrypted TOTP secret
+  supabaseUserId   String?    @unique // link to Supabase Auth if used
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
   profile           Profile?
   subscription      Subscription?
@@ -144,6 +144,7 @@ model User {
   tickets           SupportTicket[]
   auditLogs         AuditLog[]
   sessions          Session[]
+  couponRedemptions CouponRedemption[]
 
   @@index([role])
   @@index([status])
@@ -152,18 +153,18 @@ model User {
 
 // ─── 2. profiles ───────────────────────────────────────────────────────────
 model Profile {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId          String   @unique @db.Uuid
-  fullName        String
-  mobile          String?
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @unique @db.Uuid
+  fullName         String
+  mobile           String?
   mobileVerifiedAt DateTime? // set after SMS/OTP verification (trial dup-prevention)
-  country         String?
-  avatarUrl       String?
-  kycStatus   String   @default("NOT_STARTED") // NOT_STARTED | PENDING | VERIFIED | REJECTED
-  kycData     Json?
-  timezone    String   @default("UTC")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  country          String?
+  avatarUrl        String?
+  kycStatus        String    @default("NOT_STARTED") // NOT_STARTED | PENDING | VERIFIED | REJECTED
+  kycData          Json?
+  timezone         String    @default("UTC")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -172,29 +173,31 @@ model Profile {
 
 // ─── 3. subscriptions ──────────────────────────────────────────────────────
 model Subscription {
-  id                   String             @id @default(uuid()) @db.Uuid
-  userId               String             @unique @db.Uuid
-  plan                 SubscriptionPlan   @default(TRIAL)
-  status               SubscriptionStatus @default(TRIALING)
+  id                     String             @id @default(uuid()) @db.Uuid
+  userId                 String             @unique @db.Uuid
+  plan                   SubscriptionPlan   @default(TRIAL)
+  status                 SubscriptionStatus @default(TRIALING)
   // Pricing in integer CENTS (defaults = Basic plan). Per-user overridable.
-  monthlyPriceCents    Int                @default(1000) // $10.00
-  includedTrades       Int                @default(150)
-  overageCents         Int                @default(10)   // $0.10 per extra trade
+  monthlyPriceCents      Int                @default(1000) // $10.00
+  includedTrades         Int                @default(150)
+  overageCents           Int                @default(10) // $0.10 per extra trade
+  // One-time coupon discount applied to the NEXT invoice (0–100%), then reset to 0.
+  nextInvoiceDiscountPct Int                @default(0)
   // MONTHLY usage window (150-trade allowance resets here) + the usage counter
-  tradesThisPeriod     Int                @default(0)
-  currentPeriodStart   DateTime?
-  currentPeriodEnd     DateTime?
+  tradesThisPeriod       Int                @default(0)
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
   // Paid-access term end (monthly for BASIC, annual for PRO). Gates trading.
-  billingInterval      String             @default("MONTH") // MONTH | YEAR
-  paidUntil            DateTime?
-  trialStartedAt       DateTime?
-  trialEndsAt          DateTime?
+  billingInterval        String             @default("MONTH") // MONTH | YEAR
+  paidUntil              DateTime?
+  trialStartedAt         DateTime?
+  trialEndsAt            DateTime?
   // Payment-provider linkage (Stripe/Razorpay/Binance Pay — wired in a later phase)
-  provider             String?
-  providerCustomerId   String?
+  provider               String?
+  providerCustomerId     String?
   providerSubscriptionId String?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   invoices UsageInvoice[]
@@ -202,6 +205,42 @@ model Subscription {
   @@index([status])
   @@index([currentPeriodEnd])
   @@map("subscriptions")
+}
+
+// ─── coupons (admin-created discount codes / direct grants) ─────────────────
+model Coupon {
+  id              String    @id @default(uuid()) @db.Uuid
+  code            String?   @unique // redeemable code; null = admin direct-grant only
+  discountPercent Int // 1–100 (100 = free)
+  note            String?
+  active          Boolean   @default(true)
+  expiresAt       DateTime?
+  maxRedemptions  Int? // null = unlimited
+  timesRedeemed   Int       @default(0)
+  createdById     String?   @db.Uuid
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([code])
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id              String   @id @default(uuid()) @db.Uuid
+  couponId        String   @db.Uuid
+  userId          String   @db.Uuid
+  discountPercent Int // snapshot at redemption time
+  source          String   @default("CODE") // CODE | ADMIN
+  createdAt       DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userId]) // one use per coupon per user
+  @@index([userId])
+  @@map("coupon_redemptions")
 }
 
 // ─── 4. api_keys (Binance credentials, ENCRYPTED) ──────────────────────────
@@ -221,7 +260,7 @@ model ApiKey {
   status          ApiKeyStatus @default(UNVERIFIED)
   canTrade        Boolean      @default(false)
   canWithdraw     Boolean      @default(false) // we WARN loudly if true
-  binanceUid      String?      // SHA-256 fingerprint of the API key — enforces one Binance account = one user (trial dup-prevention)
+  binanceUid      String? // SHA-256 fingerprint of the API key — enforces one Binance account = one user (trial dup-prevention)
   lastValidatedAt DateTime?
   lastError       String?
   createdAt       DateTime     @default(now())
@@ -236,17 +275,17 @@ model ApiKey {
 
 // ─── 5. trading_accounts (per-user account snapshot) ───────────────────────
 model TradingAccount {
-  id              String   @id @default(uuid()) @db.Uuid
-  userId          String   @db.Uuid
-  exchange        String   @default("BINANCE_FUTURES")
-  totalBalance    Decimal  @default(0) @db.Decimal(38, 18)
-  availableBalance Decimal @default(0) @db.Decimal(38, 18)
-  unrealizedPnl   Decimal  @default(0) @db.Decimal(38, 18)
-  marginUsed      Decimal  @default(0) @db.Decimal(38, 18)
-  currency        String   @default("USDT")
-  lastSyncedAt    DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  exchange         String    @default("BINANCE_FUTURES")
+  totalBalance     Decimal   @default(0) @db.Decimal(38, 18)
+  availableBalance Decimal   @default(0) @db.Decimal(38, 18)
+  unrealizedPnl    Decimal   @default(0) @db.Decimal(38, 18)
+  marginUsed       Decimal   @default(0) @db.Decimal(38, 18)
+  currency         String    @default("USDT")
+  lastSyncedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -326,29 +365,29 @@ model BotConfig {
 
 // ─── 8. positions (open & historical, source-of-truth mirror of Binance) ───
 model Position {
-  id              String         @id @default(uuid()) @db.Uuid
-  userId          String         @db.Uuid
-  symbol          String
-  side            PositionSide
-  status          PositionStatus @default(OPEN)
-  entryPrice      Decimal        @db.Decimal(38, 18)
-  markPrice       Decimal?       @db.Decimal(38, 18)
-  exitPrice       Decimal?       @db.Decimal(38, 18)
-  quantity        Decimal        @db.Decimal(38, 18)
-  leverage        Int
-  marginUsd       Decimal        @db.Decimal(18, 8)
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @db.Uuid
+  symbol         String
+  side           PositionSide
+  status         PositionStatus @default(OPEN)
+  entryPrice     Decimal        @db.Decimal(38, 18)
+  markPrice      Decimal?       @db.Decimal(38, 18)
+  exitPrice      Decimal?       @db.Decimal(38, 18)
+  quantity       Decimal        @db.Decimal(38, 18)
+  leverage       Int
+  marginUsd      Decimal        @db.Decimal(18, 8)
   // protection state managed by the watchdog
-  stopLoss        Decimal?       @db.Decimal(38, 18)
-  takeProfit      Decimal?       @db.Decimal(38, 18)
-  breakEvenArmed  Boolean        @default(false)
-  trailingArmed   Boolean        @default(false)
-  unrealizedPnl   Decimal        @default(0) @db.Decimal(38, 18)
-  realizedPnl     Decimal?       @db.Decimal(38, 18)
-  entryScore      Int?           // 19-condition score at entry
-  entryBias       String?
-  binanceOrderId  String?
-  openedAt        DateTime       @default(now())
-  closedAt        DateTime?
+  stopLoss       Decimal?       @db.Decimal(38, 18)
+  takeProfit     Decimal?       @db.Decimal(38, 18)
+  breakEvenArmed Boolean        @default(false)
+  trailingArmed  Boolean        @default(false)
+  unrealizedPnl  Decimal        @default(0) @db.Decimal(38, 18)
+  realizedPnl    Decimal?       @db.Decimal(38, 18)
+  entryScore     Int? // 19-condition score at entry
+  entryBias      String?
+  binanceOrderId String?
+  openedAt       DateTime       @default(now())
+  closedAt       DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -359,23 +398,23 @@ model Position {
 
 // ─── 9. trade_history (completed round-trips, tax-ready ledger) ────────────
 model TradeHistory {
-  id            String       @id @default(uuid()) @db.Uuid
-  userId        String       @db.Uuid
-  symbol        String
-  side          PositionSide
-  entryPrice    Decimal      @db.Decimal(38, 18)
-  exitPrice     Decimal      @db.Decimal(38, 18)
-  quantity      Decimal      @db.Decimal(38, 18)
-  leverage      Int
-  grossPnl      Decimal      @db.Decimal(38, 18) // realized PnL
-  feeUsd        Decimal      @default(0) @db.Decimal(18, 8) // exchange (Binance) fees
-  netPnl        Decimal      @db.Decimal(38, 18) // user's take-home (= grossPnl − exchange fees)
-  rr            Decimal?     @db.Decimal(8, 4)
-  durationSec   Int?
-  exitReason    String?      // TP | SL | TRAIL | MANUAL | LIQUIDATION
-  positionId    String?      @db.Uuid
-  openedAt      DateTime
-  closedAt      DateTime     @default(now())
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  symbol      String
+  side        PositionSide
+  entryPrice  Decimal      @db.Decimal(38, 18)
+  exitPrice   Decimal      @db.Decimal(38, 18)
+  quantity    Decimal      @db.Decimal(38, 18)
+  leverage    Int
+  grossPnl    Decimal      @db.Decimal(38, 18) // realized PnL
+  feeUsd      Decimal      @default(0) @db.Decimal(18, 8) // exchange (Binance) fees
+  netPnl      Decimal      @db.Decimal(38, 18) // user's take-home (= grossPnl − exchange fees)
+  rr          Decimal?     @db.Decimal(8, 4)
+  durationSec Int?
+  exitReason  String? // TP | SL | TRAIL | MANUAL | LIQUIDATION
+  positionId  String?      @db.Uuid
+  openedAt    DateTime
+  closedAt    DateTime     @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -386,16 +425,16 @@ model TradeHistory {
 
 // ─── 10. pnl_history (daily aggregates for charts/ROI) ─────────────────────
 model PnlHistory {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid
-  date         DateTime @db.Date
-  realizedPnl  Decimal  @default(0) @db.Decimal(38, 18)
-  trades       Int      @default(0)
-  wins         Int      @default(0)
-  losses       Int      @default(0)
-  volume       Decimal  @default(0) @db.Decimal(38, 18)
-  equityEnd    Decimal  @default(0) @db.Decimal(38, 18)
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  date        DateTime @db.Date
+  realizedPnl Decimal  @default(0) @db.Decimal(38, 18)
+  trades      Int      @default(0)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  volume      Decimal  @default(0) @db.Decimal(38, 18)
+  equityEnd   Decimal  @default(0) @db.Decimal(38, 18)
+  createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -406,22 +445,22 @@ model PnlHistory {
 
 // ─── 11. usage_invoices (monthly subscription + per-trade overage billing) ──
 model UsageInvoice {
-  id              String        @id @default(uuid()) @db.Uuid
-  userId          String        @db.Uuid
-  subscriptionId  String        @db.Uuid
-  periodStart     DateTime
-  periodEnd       DateTime
-  tradesCount     Int           // trades opened in the period
-  includedTrades  Int           // included allowance at the time
-  overageTrades   Int           // max(0, tradesCount − includedTrades)
-  baseCents       Int           // monthly subscription price
-  overageCents    Int           // overageTrades × per-trade price
-  totalCents      Int           // baseCents + overageCents
-  status          InvoiceStatus @default(OPEN)
-  paidAt          DateTime?
-  provider        String?
-  providerRef     String?
-  createdAt       DateTime      @default(now())
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @db.Uuid
+  subscriptionId String        @db.Uuid
+  periodStart    DateTime
+  periodEnd      DateTime
+  tradesCount    Int // trades opened in the period
+  includedTrades Int // included allowance at the time
+  overageTrades  Int // max(0, tradesCount − includedTrades)
+  baseCents      Int // monthly subscription price
+  overageCents   Int // overageTrades × per-trade price
+  totalCents     Int // baseCents + overageCents
+  status         InvoiceStatus @default(OPEN)
+  paidAt         DateTime?
+  provider       String?
+  providerRef    String?
+  createdAt      DateTime      @default(now())
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
@@ -433,13 +472,13 @@ model UsageInvoice {
 
 // ─── 12. wallets (per-user trading P&L tally) ──────────────────────────────
 model Wallet {
-  id              String   @id @default(uuid()) @db.Uuid
-  userId          String   @unique @db.Uuid
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
   // Lifetime trading P&L (the user's own money; the platform no longer takes a cut).
-  lifetimeProfit  Decimal  @default(0) @db.Decimal(38, 18)
-  currency        String   @default("USDT")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  lifetimeProfit Decimal  @default(0) @db.Decimal(38, 18)
+  currency       String   @default("USDT")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -450,12 +489,12 @@ model Wallet {
 // One trial per user / email / mobile / Binance UID. Unique constraints make a
 // second trial on any of those identifiers impossible.
 model TrialClaim {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @unique @db.Uuid
-  email       String   @unique
-  mobile      String?  @unique
-  binanceUid  String?  @unique
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @unique @db.Uuid
+  email      String   @unique
+  mobile     String?  @unique
+  binanceUid String?  @unique
+  createdAt  DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -464,15 +503,15 @@ model TrialClaim {
 
 // ─── 13. transactions (money movements: fee charges, subscriptions) ────────
 model Transaction {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  type        TxType
-  status      TxStatus @default(PENDING)
-  amountUsd   Decimal  @db.Decimal(18, 8)
-  currency    String   @default("USDT")
-  reference   String?  // invoice id, provider charge id, etc.
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  type      TxType
+  status    TxStatus @default(PENDING)
+  amountUsd Decimal  @db.Decimal(18, 8)
+  currency  String   @default("USDT")
+  reference String? // invoice id, provider charge id, etc.
+  metadata  Json?
+  createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -500,15 +539,15 @@ model Notification {
 
 // ─── 15. support_tickets ───────────────────────────────────────────────────
 model SupportTicket {
-  id          String       @id @default(uuid()) @db.Uuid
-  userId      String       @db.Uuid
-  subject     String
-  status      TicketStatus @default(OPEN)
-  priority    String       @default("NORMAL")
-  messages    Json         @default("[]") // [{from, body, at}]
-  assignedTo  String?      @db.Uuid
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @db.Uuid
+  subject    String
+  status     TicketStatus @default(OPEN)
+  priority   String       @default("NORMAL")
+  messages   Json         @default("[]") // [{from, body, at}]
+  assignedTo String?      @db.Uuid
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -521,7 +560,7 @@ model SupportTicket {
 model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String?  @db.Uuid
-  action    String   // LOGIN | LOGOUT | API_KEY_ADDED | BOT_START | CONFIG_CHANGE ...
+  action    String // LOGIN | LOGOUT | API_KEY_ADDED | BOT_START | CONFIG_CHANGE ...
   ip        String?
   userAgent String?
   metadata  Json?
@@ -536,13 +575,13 @@ model AuditLog {
 
 // ─── 17. admin_logs (privileged-action trail) ──────────────────────────────
 model AdminLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  adminId     String   @db.Uuid
-  targetUserId String? @db.Uuid
-  action      String   // USER_DISABLE | BOT_FORCE_STOP | FORCE_CLOSE | FEE_WAIVE | BROADCAST ...
-  reason      String?
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(uuid()) @db.Uuid
+  adminId      String   @db.Uuid
+  targetUserId String?  @db.Uuid
+  action       String // USER_DISABLE | BOT_FORCE_STOP | FORCE_CLOSE | FEE_WAIVE | BROADCAST ...
+  reason       String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
 
   @@index([adminId, createdAt])
   @@index([targetUserId])
@@ -561,16 +600,16 @@ model SystemSetting {
 
 // ─── 19. sessions (refresh-token rotation / device management) ─────────────
 model Session {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String   @db.Uuid
-  refreshTokenHash String   // argon2 hash of the refresh token; rotated on use
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String // argon2 hash of the refresh token; rotated on use
   ip               String?
   userAgent        String?
   device           String?
   revokedAt        DateTime?
   expiresAt        DateTime
-  lastUsedAt       DateTime @default(now())
-  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime  @default(now())
+  createdAt        DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

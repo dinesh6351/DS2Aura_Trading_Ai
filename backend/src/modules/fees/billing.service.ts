@@ -112,7 +112,9 @@ export const billingService = {
     const used = sub.tradesThisPeriod;
     const remaining = Math.max(0, sub.includedTrades - used);
     const overage = Math.max(0, used - sub.includedTrades);
-    const estCents = sub.monthlyPriceCents + overage * sub.overageCents; // monthly invoice (overage-only for PRO)
+    const discountPct = sub.nextInvoiceDiscountPct;
+    const baseAfter = discountPct > 0 ? Math.round(sub.monthlyPriceCents * (100 - discountPct) / 100) : sub.monthlyPriceCents;
+    const estCents = baseAfter + overage * sub.overageCents; // monthly invoice (coupon discounts the base, not overage)
     const inTrial = sub.status === SubscriptionStatus.TRIALING;
     const info = PLAN_INFO[sub.plan as keyof typeof PLAN_INFO] ?? PLAN_INFO.BASIC;
     return {
@@ -131,6 +133,7 @@ export const billingService = {
       renewalDate: sub.paidUntil,                      // when the paid term renews (annual for PRO)
       trialEndsAt: sub.trialEndsAt,
       inTrial,
+      nextInvoiceDiscountPct: discountPct,             // pending one-time coupon discount
       canTrade: statusCanTrade(sub.status),
       viewOnly: !statusCanTrade(sub.status),
     };
@@ -147,6 +150,11 @@ export const billingService = {
     const usageEnd = new Date(now.getTime() + 30 * DAY);              // monthly allowance window
     const paidUntil = new Date(now.getTime() + info.termDays * DAY);  // access term (annual for PRO)
 
+    // Consume any one-time coupon discount against this term charge.
+    const cur = await prisma.subscription.findUniqueOrThrow({ where: { userId }, select: { nextInvoiceDiscountPct: true } });
+    const discountPct = cur.nextInvoiceDiscountPct;
+    const termCents = discountPct > 0 ? Math.round(info.termCents * (100 - discountPct) / 100) : info.termCents;
+
     await prisma.$transaction(async (tx) => {
       const sub = await tx.subscription.update({
         where: { userId },
@@ -156,6 +164,7 @@ export const billingService = {
           monthlyPriceCents: info.monthlyBaseCents, // BASIC 1000 (monthly base) · PRO 0 (overage-only monthly)
           currentPeriodStart: now, currentPeriodEnd: usageEnd, tradesThisPeriod: 0,
           paidUntil,
+          nextInvoiceDiscountPct: 0, // one-time discount consumed
         },
       });
       // Charge the term up-front (payment provider stubbed → record a PAID invoice).
@@ -164,13 +173,13 @@ export const billingService = {
           data: {
             userId, subscriptionId: sub.id, periodStart: now, periodEnd: paidUntil,
             tradesCount: 0, includedTrades: sub.includedTrades, overageTrades: 0,
-            baseCents: info.termCents, overageCents: 0, totalCents: info.termCents,
+            baseCents: termCents, overageCents: 0, totalCents: termCents,
             status: InvoiceStatus.PAID, paidAt: now, provider: 'stub',
           },
         });
       }
     });
-    await prisma.auditLog.create({ data: { userId, action: 'SUBSCRIBE', metadata: { plan } } });
+    await prisma.auditLog.create({ data: { userId, action: 'SUBSCRIBE', metadata: { plan, discountPct } } });
     return this.usageMeter(userId);
   },
 
@@ -185,8 +194,14 @@ export const billingService = {
 
     const overage = Math.max(0, sub.tradesThisPeriod - sub.includedTrades);
     const overageCents = overage * sub.overageCents;
-    const totalCents = sub.monthlyPriceCents + overageCents;
     const wasTrial = sub.status === SubscriptionStatus.TRIALING;
+    const discountPct = sub.nextInvoiceDiscountPct;
+    // One-time coupon discounts the subscription BASE (not metered overage), keeping
+    // base + overage = total. Trial periods are free regardless.
+    const baseCents = wasTrial ? 0
+      : (discountPct > 0 ? Math.round(sub.monthlyPriceCents * (100 - discountPct) / 100) : sub.monthlyPriceCents);
+    const billedOverage = wasTrial ? 0 : overageCents;
+    const totalCents = baseCents + billedOverage;
 
     const now = new Date();
     const nextEnd = new Date(now.getTime() + 30 * DAY);
@@ -196,24 +211,22 @@ export const billingService = {
     const [, invoice] = await prisma.$transaction([
       prisma.subscription.update({
         where: { userId },
-        data: { currentPeriodStart: now, currentPeriodEnd: nextEnd, tradesThisPeriod: 0, ...extendTerm },
+        data: { currentPeriodStart: now, currentPeriodEnd: nextEnd, tradesThisPeriod: 0,
+                nextInvoiceDiscountPct: 0, ...extendTerm }, // consume one-time discount
       }),
-      // Trial periods are free → don't bill, but still record a $0 invoice for history.
       prisma.usageInvoice.create({
         data: {
           userId, subscriptionId: sub.id,
           periodStart: sub.currentPeriodStart, periodEnd: sub.currentPeriodEnd,
           tradesCount: sub.tradesThisPeriod, includedTrades: sub.includedTrades,
           overageTrades: overage,
-          baseCents: wasTrial ? 0 : sub.monthlyPriceCents,
-          overageCents: wasTrial ? 0 : overageCents,
-          totalCents: wasTrial ? 0 : totalCents,
+          baseCents, overageCents: billedOverage, totalCents,
           status: wasTrial ? InvoiceStatus.PAID : InvoiceStatus.OPEN,
           paidAt: wasTrial ? now : null,
         },
       }),
     ]);
-    logger.info({ userId, totalCents: invoice.totalCents }, 'usage invoice generated');
+    logger.info({ userId, totalCents: invoice.totalCents, discountPct }, 'usage invoice generated');
     return invoice;
   },
 

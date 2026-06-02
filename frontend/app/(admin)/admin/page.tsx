@@ -181,6 +181,8 @@ export default function AdminPage() {
         </div>
       )}
 
+      <CouponsAdmin users={users} onNote={setNote} />
+
       <div className="card">
         <div className="flex gap-2 mb-3">
           <input className="bg-bg border border-green-900/40 rounded px-3 py-2 flex-1"
@@ -237,5 +239,99 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       <span className="label">{label}</span>
       <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 mt-1" value={value} onChange={onChange} />
     </label>
+  );
+}
+
+// ── Coupons ──────────────────────────────────────────────────────────────────
+interface CouponRow {
+  id: string; code: string | null; discountPercent: number; note: string | null;
+  active: boolean; expiresAt: string | null; maxRedemptions: number | null;
+  timesRedeemed: number; redemptions: number; createdAt: string;
+}
+function CouponsAdmin({ users, onNote }: { users: AdminUser[]; onNote: (msg: string) => void }) {
+  const [coupons, setCoupons] = useState<CouponRow[]>([]);
+  const [form, setForm] = useState({ code: '', discountPercent: 50, note: '', maxRedemptions: '' });
+  const [applyCoupon, setApplyCoupon] = useState('');
+  const [applyUser, setApplyUser] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function load() { setCoupons(await api.get<CouponRow[]>('/api/admin/coupons').catch(() => [])); }
+  useEffect(() => { load(); }, []);
+
+  async function create() {
+    setBusy(true);
+    try {
+      await api.post('/api/admin/coupons', {
+        code: form.code.trim() || undefined,
+        discountPercent: Number(form.discountPercent),
+        note: form.note.trim() || undefined,
+        maxRedemptions: form.maxRedemptions ? Number(form.maxRedemptions) : undefined,
+      });
+      onNote('✅ Coupon created');
+      setForm({ code: '', discountPercent: 50, note: '', maxRedemptions: '' }); load();
+    } catch (e) { onNote(`❌ ${(e as Error).message}`); } finally { setBusy(false); }
+  }
+  async function toggle(c: CouponRow) {
+    try { await api.post(`/api/admin/coupons/${c.id}/active`, { active: !c.active }); load(); }
+    catch (e) { onNote(`❌ ${(e as Error).message}`); }
+  }
+  async function apply() {
+    if (!applyCoupon || !applyUser) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ discountPercent: number }>(`/api/admin/coupons/${applyCoupon}/apply`, { userId: applyUser });
+      onNote(`✅ Applied ${r.discountPercent}% to user's next invoice`); setApplyUser(''); load();
+    } catch (e) { onNote(`❌ ${(e as Error).message}`); } finally { setBusy(false); }
+  }
+
+  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  return (
+    <div className="card space-y-4">
+      <p className="label">🎟️ Coupons — discount codes &amp; grants</p>
+
+      {/* Create */}
+      <div className="grid sm:grid-cols-2 md:grid-cols-5 gap-2 items-end">
+        <label className="block"><span className="label">Code (optional)</span><input className={inp} placeholder="WELCOME50" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} /></label>
+        <label className="block"><span className="label">Discount %</span><input type="number" min={1} max={100} className={inp} value={form.discountPercent} onChange={(e) => setForm({ ...form, discountPercent: Number(e.target.value) })} /></label>
+        <label className="block"><span className="label">Max uses (optional)</span><input type="number" min={1} className={inp} value={form.maxRedemptions} onChange={(e) => setForm({ ...form, maxRedemptions: e.target.value })} /></label>
+        <label className="block"><span className="label">Note (optional)</span><input className={inp} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+        <button className="btn" disabled={busy} onClick={create}>Create coupon</button>
+      </div>
+      <p className="text-muted text-xs">Leave the code blank for an admin-only grant (apply it directly to a user below). 100% = free. One-time — applies to the user’s next invoice.</p>
+
+      {/* Apply to a user */}
+      <div className="grid sm:grid-cols-3 gap-2 items-end border-t border-green-900/20 pt-3">
+        <label className="block"><span className="label">Coupon</span>
+          <select className={inp} value={applyCoupon} onChange={(e) => setApplyCoupon(e.target.value)}>
+            <option value="">Select coupon…</option>
+            {coupons.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.code ?? '(grant)'} · {c.discountPercent}%</option>)}
+          </select>
+        </label>
+        <label className="block"><span className="label">User</span>
+          <select className={inp} value={applyUser} onChange={(e) => setApplyUser(e.target.value)}>
+            <option value="">Select user…</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}
+          </select>
+        </label>
+        <button className="btn" disabled={busy || !applyCoupon || !applyUser} onClick={apply}>Apply to user</button>
+      </div>
+
+      {/* List */}
+      {coupons.length > 0 && (
+        <table className="w-full text-sm">
+          <thead><tr className="text-muted text-left"><th>Code</th><th>%</th><th>Used</th><th>Limit</th><th>Note</th><th>Status</th><th></th></tr></thead>
+          <tbody>{coupons.map((c) => (
+            <tr key={c.id} className="border-t border-green-900/30">
+              <td className="font-mono">{c.code ?? <span className="text-muted">— grant —</span>}</td>
+              <td>{c.discountPercent}%</td>
+              <td>{c.timesRedeemed}</td>
+              <td>{c.maxRedemptions ?? '∞'}</td>
+              <td className="text-muted">{c.note ?? ''}</td>
+              <td><span className={c.active ? 'badge-up' : 'text-muted'}>{c.active ? 'active' : 'inactive'}</span></td>
+              <td><button className="btn text-xs" onClick={() => toggle(c)}>{c.active ? 'Disable' : 'Enable'}</button></td>
+            </tr>))}</tbody>
+        </table>
+      )}
+    </div>
   );
 }
