@@ -197,6 +197,21 @@ export class BinanceClient {
     });
   }
 
+  /** Top USDT-M perpetuals by 24h quote volume (most liquid/traded). The full
+   *  sorted list is cached 5m; callers slice to the N they need. */
+  static async topSymbols(limit = 10): Promise<string[]> {
+    const all = await cached('top:usdt-perps', 5 * 60_000, async () => {
+      const res = await fetch(`${env.BINANCE_FAPI_BASE}/fapi/v1/ticker/24hr`);
+      if (!res.ok) throw Errors.upstream(`24hr ticker ${res.status}`);
+      const raw = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
+      return raw
+        .filter((t) => /^[A-Z0-9]+USDT$/.test(t.symbol)) // USDT perpetuals only (skip dated contracts)
+        .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+        .map((t) => t.symbol);
+    });
+    return all.slice(0, Math.max(1, Math.min(limit, all.length)));
+  }
+
   /**
    * Per-symbol futures trading filters — LOT_SIZE stepSize/minQty + MIN_NOTIONAL —
    * parsed from exchangeInfo and cached 6h. Used to size orders at the EXACT

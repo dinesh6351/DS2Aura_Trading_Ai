@@ -47,6 +47,12 @@ tradingRouter.get('/ticker', asyncHandler(async (req, res) => {
   return ok(res, await BinanceClient.tickerPrices(symbols));
 }));
 
+/** GET /api/trading/top-symbols?limit=N — top USDT futures coins by 24h volume (watchlist quick-fill). */
+tradingRouter.get('/top-symbols', asyncHandler(async (req, res) => {
+  const limit = z.coerce.number().min(1).max(50).default(10).parse(req.query.limit);
+  return ok(res, await BinanceClient.topSymbols(limit));
+}));
+
 // ── Rich live signals (per watchlist coin: score, indicators, what's blocking).
 //    Computed on demand so the dashboard shows signals even when the bot is
 //    stopped; cached ~20s server-side. ─────────────────────────────────────────

@@ -480,6 +480,16 @@ function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watch
     try { await api.patch('/api/bot/config', { paperTrading: paper }); setNote(paper ? 'Switched to PAPER (safe test)' : 'Switched to LIVE — real funds at risk'); onChange(); }
     catch (e) { setErr((e as Error).message); }
   }
+  // Quick-fill the watchlist with the top-N USDT futures coins by 24h volume (applied instantly).
+  async function setTopN(n: number) {
+    setErr(''); setNote('');
+    try {
+      const syms = await api.get<string[]>(`/api/trading/top-symbols?limit=${n}`);
+      setWl(syms.join(', '));
+      await api.put('/api/trading/watchlist', { symbols: syms });
+      setNote(`Watchlist set to the top ${n} coins`); onChange(); setTimeout(() => setNote(''), 2500);
+    } catch (e) { setErr((e as Error).message); }
+  }
   async function saveAll() {
     setErr(''); setNote('');
     try {
@@ -564,8 +574,15 @@ function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watch
 
       {/* Watchlist */}
       <div>
-        <p className="label mb-1">Watchlist (comma-separated)</p>
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <p className="label">Watchlist (comma-separated)</p>
+          <span className="text-muted text-xs">quick-fill:</span>
+          {[5, 10, 20, 50].map((n) => (
+            <button key={n} type="button" className="btn text-xs py-0.5 px-2" onClick={() => setTopN(n)}>Top {n}</button>
+          ))}
+        </div>
         <textarea className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
+        <p className="text-muted text-xs mt-1">Top N = most-traded USDT futures coins by 24h volume, applied instantly. Or type your own symbols and click “Save all settings”.</p>
       </div>
 
       <button className="btn w-full" onClick={saveAll}>Save all settings</button>
