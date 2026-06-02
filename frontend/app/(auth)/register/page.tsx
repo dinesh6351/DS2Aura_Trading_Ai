@@ -1,22 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { REGIONS, REGION_TZS } from '@platform/shared';
 import { api, setAccessToken } from '@/lib/api';
+import { COUNTRIES } from '@/lib/countries';
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ fullName: '', email: '', mobile: '', country: '', password: '', timezone: 'UTC' });
+  const [form, setForm] = useState({ fullName: '', email: '', mobile: '', country: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [k]: e.target.value });
-  // Pre-select the visitor's region if we recognise their browser timezone.
-  useEffect(() => {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (REGION_TZS.has(tz)) setForm((f) => ({ ...f, timezone: tz }));
-  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,18 +27,16 @@ export default function RegisterPage() {
     <main className="min-h-screen grid place-items-center">
       <form onSubmit={submit} className="card w-[400px] space-y-3">
         <h1 className="text-accent text-xl font-bold">Create your account</h1>
-        {(['fullName', 'email', 'mobile', 'country'] as const).map((k) => (
+        {(['fullName', 'email', 'mobile'] as const).map((k) => (
           <input key={k} className="w-full bg-bg border border-green-900/40 rounded px-3 py-2"
             placeholder={k} type={k === 'email' ? 'email' : 'text'}
-            value={form[k]} onChange={set(k)} required={k !== 'mobile' && k !== 'country'} />
+            value={form[k]} onChange={set(k)} required={k !== 'mobile'} />
         ))}
-        <label className="block">
-          <span className="text-muted text-xs">Region — resets your daily limits &amp; today&apos;s P&amp;L at your local midnight</span>
-          <select className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 mt-1 text-sm" value={form.timezone}
-            onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
-            {REGIONS.map((r) => <option key={r.tz} value={r.tz}>{r.label}</option>)}
-          </select>
-        </label>
+        <select className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" value={form.country}
+          onChange={(e) => setForm({ ...form, country: e.target.value })} required>
+          <option value="">Select your country…</option>
+          {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
         <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2"
           placeholder="password" type="password" value={form.password} onChange={set('password')} required />
         {error && <p className="text-danger text-sm">{error}</p>}
