@@ -163,6 +163,10 @@ export const MODE_PRESETS: Record<TradingMode, {
  * exact same numbers. Initial stop = the user's slPercent (e.g. -1%).
  */
 export const PROFIT_LADDER: { trigger: number; lock: number }[] = [
+  { trigger: 0.003, lock: 0.0012 }, // +0.3% → lock +0.12% — break-even+: once a trade
+                                     // is genuinely green (clears the ~0.08% round-trip
+                                     // taker fee) the stop snaps above entry, so a winning
+                                     // trade can no longer fall back to the full -1% stop.
   { trigger: 0.005, lock: 0.002 }, // +0.5% → lock +0.2%
   { trigger: 0.010, lock: 0.005 }, // +1.0% → lock +0.5%
   { trigger: 0.015, lock: 0.010 }, // +1.5% → lock +1.0%
@@ -173,6 +177,9 @@ export const PROFIT_LADDER: { trigger: number; lock: number }[] = [
 ];
 export const PROFIT_TAKE_CAP = 0.05; // +5% → take profit (close)
 export const MIN_RISK_REWARD = 3;    // reject setups below 1:3
+// Binance USDT-M taker fee (0.04% per side). Subtracted from every closed trade
+// so recorded P&L matches the real wallet instead of showing a thin paper win.
+export const TAKER_FEE_RATE = 0.0004;
 
 // ---------------------------------------------------------------------------
 // API envelope

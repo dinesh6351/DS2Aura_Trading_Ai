@@ -1,8 +1,16 @@
 import fetch from 'node-fetch';
 import { hmacSha256 } from '../../lib/crypto.js';
 import { env } from '../../config/env.js';
-import { Errors } from '../../lib/http.js';
+import { Errors, AppError } from '../../lib/http.js';
 import { logger } from '../../lib/logger.js';
+
+/** True if a thrown exchange error is Binance -4120 ("use the Algo Order API"),
+ *  the documented signal to retry a trigger order with reduceOnly+quantity. */
+function is4120(e: unknown): boolean {
+  const d = (e as AppError)?.details as { code?: number } | undefined;
+  if (d && typeof d === 'object' && d.code === -4120) return true;
+  return /-4120/.test(String((e as Error)?.message ?? e));
+}
 
 /**
  * Per-tenant Binance USDT-M Futures client.
@@ -102,6 +110,39 @@ export class BinanceClient {
     });
   }
 
+  /**
+   * Resting server-side STOP_MARKET that closes the position the instant MARK
+   * price crosses `stopPrice` — protection that survives the 60s watchdog gap.
+   * `side` is the CLOSING side: SELL for a long, BUY for a short. Tries
+   * closePosition=true first; on the -4120 rejection retries with the documented
+   * reduceOnly+quantity fallback (needs `quantity`).
+   */
+  async placeStopMarket(symbol: string, side: 'BUY' | 'SELL', stopPrice: number,
+    opts: { quantity?: number } = {}) {
+    const base = { symbol, side, type: 'STOP_MARKET', stopPrice, workingType: 'MARK_PRICE', priceProtect: 'true' };
+    try {
+      return await this.signed('POST', '/fapi/v1/order', { ...base, closePosition: 'true' });
+    } catch (e) {
+      if (is4120(e) && opts.quantity != null) {
+        return this.signed('POST', '/fapi/v1/order', { ...base, quantity: opts.quantity, reduceOnly: 'true' });
+      }
+      throw e;
+    }
+  }
+
+  /** Open orders for ONE symbol (weight 1 — never poll the no-symbol form, weight 40). */
+  async getOpenOrders(symbol: string) {
+    return this.signed<Array<{ orderId: number; type: string; side: string; stopPrice: string }>>(
+      'GET', '/fapi/v1/openOrders', { symbol });
+  }
+
+  /** Cancel every resting order on a symbol (used before re-placing a moved stop,
+   *  and to clean up after a close). Best-effort — a failure must not block the close. */
+  async cancelAllOpenOrders(symbol: string): Promise<void> {
+    try { await this.signed('DELETE', '/fapi/v1/allOpenOrders', { symbol }); }
+    catch (e) { logger.warn({ e, symbol }, 'cancelAllOpenOrders failed (continuing)'); }
+  }
+
   // ── validation (used by api-key onboarding) ─────────────────────────────
   async validate(): Promise<{ canTrade: boolean; canWithdraw: boolean }> {
     const acct = await this.signed<{ canTrade: boolean; canWithdraw?: boolean }>('GET', '/fapi/v2/account');
@@ -156,19 +197,23 @@ export class BinanceClient {
    * source host is fapi, which is reachable exactly when live trading is, so this
    * is available whenever it's actually needed. Returns null if unavailable.
    */
-  static async symbolFilters(symbol: string): Promise<{ stepSize: number; minQty: number; minNotional: number } | null> {
+  static async symbolFilters(symbol: string): Promise<SymbolFilters | null> {
     const map = await cached('fapi:exinfo', 6 * 3_600_000, async () => {
       const res = await fetch(`${env.BINANCE_FAPI_BASE}/fapi/v1/exchangeInfo`);
       if (!res.ok) throw Errors.upstream(`exchangeInfo ${res.status}`);
-      const j = (await res.json()) as { symbols?: Array<{ symbol: string; filters: Array<Record<string, string>> }> };
-      const m = new Map<string, { stepSize: number; minQty: number; minNotional: number }>();
+      const j = (await res.json()) as { symbols?: Array<{ symbol: string; pricePrecision?: number; quantityPrecision?: number; filters: Array<Record<string, string>> }> };
+      const m = new Map<string, SymbolFilters>();
       for (const s of j.symbols ?? []) {
         const lot = s.filters.find((f) => f.filterType === 'LOT_SIZE');
         const notl = s.filters.find((f) => f.filterType === 'MIN_NOTIONAL');
+        const price = s.filters.find((f) => f.filterType === 'PRICE_FILTER');
         m.set(s.symbol, {
           stepSize: Number(lot?.stepSize ?? 0),
           minQty: Number(lot?.minQty ?? 0),
           minNotional: Number(notl?.notional ?? notl?.minNotional ?? 0),
+          tickSize: Number(price?.tickSize ?? 0),
+          pricePrecision: Number(s.pricePrecision ?? 2),
+          qtyPrecision: Number(s.quantityPrecision ?? 3),
         });
       }
       return m;
@@ -177,12 +222,25 @@ export class BinanceClient {
   }
 }
 
+export interface SymbolFilters {
+  stepSize: number; minQty: number; minNotional: number;
+  tickSize: number; pricePrecision: number; qtyPrecision: number;
+}
+
 /** Floor a quantity to the symbol's LOT_SIZE step (e.g. step 1 → whole units,
  *  step 0.001 → 3dp). Binance rejects any quantity not on the step grid (-1111). */
 export function floorToStep(qty: number, step: number): number {
   if (!step || step <= 0) return qty;
   const decimals = Math.max(0, Math.round(-Math.log10(step)));
   return Number((Math.floor(qty / step) * step).toFixed(decimals));
+}
+
+/** Round a price to the symbol's PRICE_FILTER tickSize grid. Binance rejects any
+ *  stopPrice not on the tick grid (-1111), so every trigger order goes through here. */
+export function roundToTick(price: number, tick: number): number {
+  if (!tick || tick <= 0) return price;
+  const decimals = Math.max(0, Math.round(-Math.log10(tick)));
+  return Number((Math.round(price / tick) * tick).toFixed(decimals));
 }
 
 function mapToStr(o: Record<string, string | number>): Record<string, string> {

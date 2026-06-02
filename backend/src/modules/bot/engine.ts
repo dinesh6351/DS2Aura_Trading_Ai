@@ -1,8 +1,8 @@
 import type { BotConfig } from '@prisma/client';
-import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
+import { PROFIT_LADDER, PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD, TAKER_FEE_RATE } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
-import { BinanceClient, floorToStep, type Candle } from '../binance/binance.client.js';
+import { BinanceClient, floorToStep, roundToTick, type Candle } from '../binance/binance.client.js';
 import { getMarketStatus, type MarketStatus } from '../binance/market.service.js';
 import { apiKeyService } from '../apikeys/apikeys.service.js';
 import { billingService } from '../fees/billing.service.js';
@@ -262,6 +262,12 @@ async function openPosition(
     }
   }
 
+  const slPercent = Number(cfg.slPercent) / 100;
+  const stopLoss = bias === 'long' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
+  const tpPercent = slPercent * Number(cfg.tpRR);
+  const takeProfit = bias === 'long' ? entryPrice * (1 + tpPercent) : entryPrice * (1 - tpPercent);
+  const closeSide = bias === 'long' ? 'SELL' : 'BUY';
+
   try {
     let orderId: number | undefined;
     if (cfg.paperTrading) {
@@ -271,12 +277,22 @@ async function openPosition(
       const side = bias === 'long' ? 'BUY' : 'SELL';
       const order = await client.marketOrder(symbol, side, qty) as { orderId?: number };
       orderId = order.orderId;
-    }
 
-    const slPercent = Number(cfg.slPercent) / 100;
-    const stopLoss = bias === 'long' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
-    const tpPercent = slPercent * Number(cfg.tpRR);
-    const takeProfit = bias === 'long' ? entryPrice * (1 + tpPercent) : entryPrice * (1 - tpPercent);
+      // MANDATORY stop loss: attach a server-side STOP_MARKET so the position is
+      // protected the instant price crosses it — not only at the next 60s tick. A
+      // naked leveraged position is more dangerous than a slipped exit, so if the
+      // stop can't attach we immediately close what we just opened.
+      const stopPx = filters ? roundToTick(stopLoss, filters.tickSize) : stopLoss;
+      try {
+        await client.placeStopMarket(symbol, closeSide, stopPx, { quantity: qty });
+      } catch (e) {
+        logger.error({ userId, symbol, e }, 'SL attach failed — closing position');
+        await client.marketOrder(symbol, closeSide, qty, true).catch(() => {});
+        await notify(userId, '⚠ Entry aborted — no stop loss',
+          `${symbol}: the position opened but its stop-loss could not be attached, so it was closed immediately for safety. Enable “Futures Algo Orders” on your Binance API key to allow exchange-side stops.`);
+        return false;
+      }
+    }
 
     await prisma.position.create({
       data: {
@@ -299,9 +315,15 @@ async function openPosition(
 }
 
 /**
- * Software watchdog (per the original project): exchange-side stops are rejected
- * (-4120) on keys without Algo-Order permission, so we enforce break-even,
- * trailing and hard SL/TP here with reduceOnly market closes.
+ * Live protection — hybrid of exchange-side and software stops:
+ *  - Primary: a server-side STOP_MARKET (placed on entry, ratcheted up here as the
+ *    profit ladder arms) closes the position the instant price crosses it, even
+ *    between 60s ticks. This is what closes the fast-reversal gap.
+ *  - Backup: this software watchdog still evaluates each tick and market-closes
+ *    with reduceOnly, in case the exchange stop was rejected (-4120 with no Algo
+ *    permission) or hasn't filled yet. It also self-heals any position whose
+ *    server-side stop went missing (orphan protection) and reconciles positions
+ *    that left the exchange using Binance's own realized PnL.
  */
 async function runWatchdog(
   userId: string, client: BinanceClient, cfg: BotConfig,
@@ -311,31 +333,75 @@ async function runWatchdog(
   const live = new Map(positions.map((p) => [p.symbol, p]));
 
   for (const pos of open) {
+    const long = pos.side === 'LONG';
+    const closeSide = long ? 'SELL' : 'BUY';
     const ex = live.get(pos.symbol);
-    if (!ex) { // closed on exchange (manual/liquidation) — reconcile
-      await closePosition(userId, cfg, pos, Number(pos.markPrice ?? pos.entryPrice), 'EXTERNAL');
+
+    // Gone from the exchange → the server-side stop fired between ticks, or it was
+    // closed manually / liquidated. Reconstruct the true exit from Binance's own
+    // realized PnL so the recorded trade matches the wallet, then reconcile.
+    if (!ex) {
+      let exitPx = Number(pos.markPrice ?? pos.entryPrice);
+      let reason = 'EXTERNAL';
+      try {
+        const income = await client.getRealizedIncome(pos.openedAt.getTime());
+        const realized = income.filter((i) => i.symbol === pos.symbol)
+          .reduce((s, i) => s + Number(i.income), 0);
+        if (realized !== 0) {
+          const q = Number(pos.quantity);
+          exitPx = long ? Number(pos.entryPrice) + realized / q : Number(pos.entryPrice) - realized / q;
+          reason = pos.trailingArmed ? 'TRAIL' : realized < 0 ? 'SL' : 'TP';
+        }
+      } catch (e) { logger.warn({ e, pos: pos.id }, 'reconcile income lookup failed'); }
+      await client.cancelAllOpenOrders(pos.symbol); // clear any leftover resting order
+      await closePosition(userId, cfg, pos, exitPx, reason);
       continue;
     }
+
     const mark = ex.markPrice;
-    const long = pos.side === 'LONG';
+    const filters = await BinanceClient.symbolFilters(pos.symbol).catch(() => null);
     const prot = evaluateProtection(pos, mark, cfg);
 
     if (prot.close) {
+      // Software backup — only reached if the server-side stop hasn't filled yet.
       try {
-        await client.marketOrder(pos.symbol, long ? 'SELL' : 'BUY', Number(pos.quantity), true);
+        await client.marketOrder(pos.symbol, closeSide, Number(pos.quantity), true);
       } catch (e) { logger.error({ e, pos: pos.id }, 'watchdog close failed'); continue; }
+      await client.cancelAllOpenOrders(pos.symbol);
       await closePosition(userId, cfg, pos, mark, prot.reason);
-    } else if (prot.newStopLoss != null) {
+      continue;
+    }
+
+    if (prot.newStopLoss != null) {
       await prisma.position.update({
         where: { id: pos.id },
         data: { stopLoss: prot.newStopLoss, markPrice: mark, unrealizedPnl: ex.unRealizedProfit,
                 breakEvenArmed: true, trailingArmed: true },
       });
+      // Ratchet the REAL stop up on the exchange (cancel + re-place at the new
+      // level) so the locked-in profit is guarded server-side between ticks.
+      const stopPx = filters ? roundToTick(prot.newStopLoss, filters.tickSize) : prot.newStopLoss;
+      await client.cancelAllOpenOrders(pos.symbol);
+      await client.placeStopMarket(pos.symbol, closeSide, stopPx, { quantity: Number(pos.quantity) })
+        .catch((e) => logger.error({ e, pos: pos.id }, 'move stop failed — software watchdog still guards'));
       await notify(userId, '🔒 Profit lock updated',
         `${pos.symbol} stop → ${prot.newStopLoss.toFixed(6)} (securing +${((prot.lockPct ?? 0) * 100).toFixed(1)}%)`);
-    } else {
-      await prisma.position.update({ where: { id: pos.id }, data: { markPrice: mark, unrealizedPnl: ex.unRealizedProfit } });
+      continue;
     }
+
+    // No change — refresh mark, then self-heal a missing stop (orphan protection).
+    await prisma.position.update({ where: { id: pos.id }, data: { markPrice: mark, unrealizedPnl: ex.unRealizedProfit } });
+    try {
+      const orders = await client.getOpenOrders(pos.symbol);
+      if (!orders.some((o) => o.type === 'STOP_MARKET')) {
+        const curStop = pos.stopLoss != null ? Number(pos.stopLoss)
+          : long ? Number(pos.entryPrice) * (1 - Number(cfg.slPercent) / 100)
+                 : Number(pos.entryPrice) * (1 + Number(cfg.slPercent) / 100);
+        const stopPx = filters ? roundToTick(curStop, filters.tickSize) : curStop;
+        await client.placeStopMarket(pos.symbol, closeSide, stopPx, { quantity: Number(pos.quantity) });
+        logger.info({ pos: pos.id }, 'orphan position re-protected with STOP_MARKET');
+      }
+    } catch (e) { logger.warn({ e, pos: pos.id }, 'orphan stop check failed'); }
   }
 }
 
@@ -376,28 +442,34 @@ async function closePosition(
   const qty = Number(pos.quantity);
   const long = pos.side === 'LONG';
   const grossPnl = (long ? exitPrice - entry : entry - exitPrice) * qty;
+  // Binance taker fee on BOTH legs (entry + exit notional). Subtracting it makes
+  // the recorded P&L match the real wallet instead of a thin paper "win".
+  const feeUsd = (entry + exitPrice) * qty * TAKER_FEE_RATE;
+  const netPnl = grossPnl - feeUsd;
 
   const trade = await prisma.$transaction(async (tx) => {
     await tx.position.update({
       where: { id: pos.id },
-      data: { status: 'CLOSED', exitPrice, realizedPnl: grossPnl, closedAt: new Date() },
+      data: { status: 'CLOSED', exitPrice, realizedPnl: netPnl, closedAt: new Date() },
     });
     const t = await tx.tradeHistory.create({
       data: {
         userId, symbol: pos.symbol, side: long ? 'LONG' : 'SHORT',
         entryPrice: entry, exitPrice, quantity: qty, leverage: pos.leverage,
-        grossPnl, netPnl: grossPnl, // no platform cut — user keeps 100% of trading P&L
+        grossPnl, feeUsd, netPnl, // take-home = price P&L − exchange fees (no platform cut)
         exitReason: reason, openedAt: pos.openedAt,
         durationSec: Math.round((Date.now() - pos.openedAt.getTime()) / 1000),
       },
     });
-    const win = grossPnl > 0;
+    // Win/loss is decided on NET P&L — a trade that's gross-positive but eaten by
+    // fees is a real loss and must count toward the consecutive-loss protector.
+    const win = netPnl > 0;
     await tx.botConfig.update({
       where: { userId },
       data: win ? { consecutiveLosses: 0 } : { consecutiveLosses: { increment: 1 } },
     });
     // Track the user's lifetime trading P&L (their money — platform takes no cut).
-    await tx.wallet.update({ where: { userId }, data: { lifetimeProfit: { increment: grossPnl } } });
+    await tx.wallet.update({ where: { userId }, data: { lifetimeProfit: { increment: netPnl } } });
     return t;
   });
   void trade; void cfg;
@@ -405,16 +477,20 @@ async function closePosition(
   // Let adaptive learning see this outcome on the next tick (no-op if disabled).
   bustLearningCache(userId);
 
-  realtime.publish(`user:${userId}:positions`, { event: 'CLOSE', symbol: pos.symbol, pnl: grossPnl, reason });
-  realtime.publish(`user:${userId}:pnl`, { realized: grossPnl });
+  realtime.publish(`user:${userId}:positions`, { event: 'CLOSE', symbol: pos.symbol, pnl: netPnl, reason });
+  realtime.publish(`user:${userId}:pnl`, { realized: netPnl });
   const tag = cfg.paperTrading ? ' [PAPER]' : '';
   const title = reason === 'TP' ? '🎯 Take profit hit'
-    : reason === 'TRAIL' ? '📈 Trailing stop — profit secured'
+    : reason === 'TRAIL' ? (netPnl >= 0
+        ? '📈 Trailing stop — profit secured'
+        // The locked stop was hit, but a fast move between 60s ticks filled the
+        // close below it — be honest that this one closed red.
+        : '📉 Trailing stop — fast reversal, closed below the locked level')
     : reason === 'SL' ? '🛑 Stop loss hit'
     : reason === 'EXTERNAL' ? 'Position closed (external)'
-    : grossPnl >= 0 ? 'Trade won' : 'Trade lost';
+    : netPnl >= 0 ? 'Trade won' : 'Trade lost';
   await notify(userId, `${title}${tag}`,
-    `${pos.symbol} closed (${reason}): ${grossPnl >= 0 ? '+' : ''}${grossPnl.toFixed(4)} USDT`);
+    `${pos.symbol} closed (${reason}): ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(4)} USDT (after ${feeUsd.toFixed(4)} fee)`);
 }
 
 async function pauseWithError(userId: string, reason: string) {
