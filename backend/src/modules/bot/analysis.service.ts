@@ -259,12 +259,20 @@ export async function signalsOverview(symbols: string[], cfg: BotConfig | null, 
   const rows: SignalRow[] = [];
   for (let i = 0; i < symbols.length; i += 6) {
     const batch = symbols.slice(i, i + 6);
-    const part = await Promise.all(batch.map(async (symbol): Promise<SignalRow | null> => {
+    const part = await Promise.all(batch.map(async (symbol): Promise<SignalRow> => {
       const [snap, sig] = await Promise.all([
         snapshot(symbol).catch(() => null),
         signalBreakdown(symbol, cfg, market).catch(() => null),
       ]);
-      if (!sig) return null;
+      if (!sig) {
+        // Keep a row even when a symbol can't be analysed right now (e.g. a transient
+        // klines failure) so the dashboard's coin count always matches the watchlist.
+        return {
+          symbol, bias: 'none', score: 0, threshold: cfg?.scoreThreshold ?? 85, allPass: false,
+          ema8: null, rsi3: null, rsi14: null, volRatio: null, vwapDeltaPct: null,
+          atrPct: null, adx: null, macdHist: null, trend: 'n/a', blocking: 'No market data yet',
+        };
+      }
       const trend = snap == null ? 'n/a'
         : snap.ema8 > snap.ema20 && snap.ema20 > snap.ema50 ? 'up'
         : snap.ema8 < snap.ema20 && snap.ema20 < snap.ema50 ? 'down' : 'mixed';
@@ -279,7 +287,7 @@ export async function signalsOverview(symbols: string[], cfg: BotConfig | null, 
         trend, blocking,
       };
     }));
-    for (const r of part) if (r) rows.push(r);
+    for (const r of part) rows.push(r);
   }
   rows.sort((a, b) => b.score - a.score);
   _signalsCache.set(key, { at: Date.now(), data: rows });
