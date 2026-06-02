@@ -189,6 +189,12 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Usage & Billing — subscription / usage meter (kept at top) */}
+        {usage && <UsageMeter u={usage} onSubscribe={subscribe} />}
+
+        {/* What is this bot & how does it work? — explainer (kept at top) */}
+        <BotExplainer bot={bot} />
+
         {/* ═══════════════ TOP — live trading & key numbers ═══════════════ */}
 
         {/* Portfolio stat cards (key KPIs) */}
@@ -485,12 +491,6 @@ export default function Dashboard() {
 
         {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
         <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
-
-        {/* What is this bot? — collapsible explainer for new users */}
-        <BotExplainer bot={bot} />
-
-        {/* Usage & Billing — subscription / usage meter */}
-        {usage && <UsageMeter u={usage} onSubscribe={subscribe} />}
 
         {/* Account & Trade Detail */}
         <section className="card">
