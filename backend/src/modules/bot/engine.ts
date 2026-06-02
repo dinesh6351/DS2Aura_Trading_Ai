@@ -80,7 +80,16 @@ function evaluateProtection(
  */
 export async function tickUser(userId: string): Promise<void> {
   const cfg = await prisma.botConfig.findUnique({ where: { userId } });
-  if (!cfg || cfg.status !== 'RUNNING') return;
+  if (!cfg) return;
+  // STOPPED / ERROR → fully idle. RUNNING and PAUSED both run the watchdog below so
+  // open positions stay protected; PAUSED simply opens no NEW trades (gated after the
+  // watchdog) — e.g. when the daily-trade-limit guard pauses the bot until you Start.
+  if (cfg.status !== 'RUNNING' && cfg.status !== 'PAUSED') return;
+
+  // A PAUSED bot only needs ticking while it still has open positions to protect;
+  // once flat there's nothing to do until the user presses Start (avoids pointless
+  // Binance calls for idle paused bots).
+  if (cfg.status === 'PAUSED' && (await prisma.position.count({ where: { userId, status: 'OPEN' } })) === 0) return;
 
   let creds;
   try {
@@ -102,6 +111,10 @@ export async function tickUser(userId: string): Promise<void> {
   if (cfg.paperTrading) await runPaperWatchdog(userId, cfg);
   else await runWatchdog(userId, client, cfg, exchangePositions);
 
+  // Open positions are now protected. Everything below OPENS new trades, so it's
+  // gated to RUNNING — a PAUSED bot manages existing positions but takes no new ones.
+  if (cfg.status !== 'RUNNING') return;
+
   // 2. subscription gate — VIEW-ONLY when trial/subscription has lapsed.
   // The watchdog above STILL protects existing positions, but no new trades or
   // signals are produced (bot + AI signals disabled until the user renews).
@@ -115,7 +128,7 @@ export async function tickUser(userId: string): Promise<void> {
     await pauseWithError(userId, `Auto-paused after ${cfg.consecutiveLosses} consecutive losses`);
     return;
   }
-  if (cfg.tradesToday >= cfg.maxTradesPerDay) return;
+  if (cfg.tradesToday >= cfg.maxTradesPerDay) { await pauseForDailyCap(userId, cfg.maxTradesPerDay); return; }
   // Concurrency: in PAPER mode count our simulated DB positions; in LIVE mode
   // count what's actually on the exchange.
   const dbOpen = await prisma.position.findMany({ where: { userId, status: 'OPEN' }, select: { symbol: true } });
@@ -137,6 +150,7 @@ export async function tickUser(userId: string): Promise<void> {
   const market = await getMarketStatus(); // shared across all tenants, cached 60s
 
   let slotsLeft = cfg.maxConcurrentPositions - openCount;
+  let dailyLeft = cfg.maxTradesPerDay - cfg.tradesToday; // remaining trades allowed TODAY (enforced per-trade so we never overshoot the cap within one tick)
   let availableLeft = balance.availableUsdt; // decremented as we allocate this tick
   const marginUsd = Number(cfg.marginPerTradeUsd);
   // Rank highest-confidence setups first so the best ones win the open slots.
@@ -151,13 +165,15 @@ export async function tickUser(userId: string): Promise<void> {
   }
   ranked.sort((a, b) => b.score - a.score);
   for (const r of ranked) {
-    if (slotsLeft <= 0) break;
+    if (slotsLeft <= 0 || dailyLeft <= 0) break; // stop at the daily cap, never over it
     const opened = await openPosition(userId, client, cfg, r.symbol, r.bias, r.entryPrice, r.score, availableLeft);
-    if (opened) { slotsLeft--; availableLeft -= marginUsd; }
+    if (opened) { slotsLeft--; dailyLeft--; availableLeft -= marginUsd; }
   }
 
   await prisma.botConfig.update({ where: { userId }, data: { lastTickAt: new Date() } });
   realtime.publish(`user:${userId}:signals`, { decisions, at: Date.now() });
+  // Reached the daily limit this tick → pause; the bot won't trade again until Start.
+  if (dailyLeft <= 0) await pauseForDailyCap(userId, cfg.maxTradesPerDay);
 }
 
 /** Build the full strategy context for one symbol and score it. */
@@ -489,6 +505,17 @@ async function closePosition(
     : netPnl >= 0 ? 'Trade won' : 'Trade lost';
   await notify(userId, `${title}${tag}`,
     `${pos.symbol} closed (${reason}): ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(4)} USDT (after ${feeUsd.toFixed(4)} fee)`);
+}
+
+/** Daily trade cap reached → PAUSE the bot (no new trades) but keep protecting open
+ *  positions. It won't auto-resume — the user presses Start to trade again. */
+async function pauseForDailyCap(userId: string, cap: number) {
+  await prisma.botConfig.update({
+    where: { userId },
+    data: { status: 'PAUSED', pausedReason: `Daily trade limit (${cap}) reached — press Start to trade again.` },
+  });
+  await notify(userId, '⏸ Daily trade limit reached',
+    `The bot opened its ${cap} trade${cap === 1 ? '' : 's'} for today and has paused — it won't open more until you press Start (raise the limit first if you want more). Open positions stay protected.`);
 }
 
 async function pauseWithError(userId: string, reason: string) {

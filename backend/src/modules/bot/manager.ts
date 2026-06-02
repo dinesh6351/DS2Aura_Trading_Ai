@@ -43,8 +43,10 @@ async function sweep() {
   if (isBanned()) { logger.warn('Binance ban active — skipping sweep'); return; }
   running = true;
   try {
+    // RUNNING bots trade + are watchdogged; PAUSED bots are still ticked so the
+    // watchdog keeps protecting any open positions (e.g. after the daily-limit pause).
     const users = await prisma.botConfig.findMany({
-      where: { status: 'RUNNING' }, select: { userId: true },
+      where: { status: { in: ['RUNNING', 'PAUSED'] } }, select: { userId: true },
     });
     logger.debug({ count: users.length }, 'sweep: running bots');
 
