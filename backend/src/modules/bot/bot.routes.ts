@@ -13,6 +13,7 @@ export const botRouter = Router();
 botRouter.use(authenticate);
 
 const uid = (req: unknown) => (req as AuthedRequest).auth.userId;
+const role = (req: unknown) => (req as AuthedRequest).auth.role;
 
 /** GET /api/bot/status — current bot config + runtime state for THIS user. */
 botRouter.get('/status', asyncHandler(async (req, res) => {
@@ -93,7 +94,7 @@ const configSchema = z.object({
   trailArmPct: z.number().min(0.1).max(10).optional(),
   trailGapPct: z.number().min(0.05).max(10).optional(),
   maxConcurrentPositions: z.number().min(1).max(20).optional(),
-  maxTradesPerDay: z.number().min(1).max(100).optional(),
+  maxTradesPerDay: z.number().min(0).max(100).optional(), // 0 = unlimited (admin only, enforced in handler)
   maxConsecutiveLosses: z.number().min(1).max(20).optional(),
   lossCooldownMin: z.number().min(0).max(720).optional(),
   marginGuardPct: z.number().min(10).max(100).optional(),
@@ -110,6 +111,10 @@ const configSchema = z.object({
 botRouter.patch('/config', asyncHandler(async (req, res) => {
   const userId = uid(req);
   const patch = configSchema.parse(req.body);
+  // Unlimited daily trades (maxTradesPerDay = 0) is an admin-only privilege.
+  if (patch.maxTradesPerDay === 0 && role(req) !== 'ADMIN') {
+    throw Errors.badRequest('Unlimited daily trades is available to admins only.');
+  }
   // Don't let a user flip paper⇄live while positions are open — the watchdog
   // branches on this flag, so a mid-flight switch would orphan open positions.
   if (patch.paperTrading !== undefined) {

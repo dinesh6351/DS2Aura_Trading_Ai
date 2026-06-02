@@ -128,7 +128,8 @@ export async function tickUser(userId: string): Promise<void> {
     await pauseWithError(userId, `Auto-paused after ${cfg.consecutiveLosses} consecutive losses`);
     return;
   }
-  if (cfg.tradesToday >= cfg.maxTradesPerDay) { await pauseForDailyCap(userId, cfg.maxTradesPerDay); return; }
+  // maxTradesPerDay = 0 means UNLIMITED (admin) — skip the daily cap entirely.
+  if (cfg.maxTradesPerDay > 0 && cfg.tradesToday >= cfg.maxTradesPerDay) { await pauseForDailyCap(userId, cfg.maxTradesPerDay); return; }
   // Concurrency: in PAPER mode count our simulated DB positions; in LIVE mode
   // count what's actually on the exchange.
   const dbOpen = await prisma.position.findMany({ where: { userId, status: 'OPEN' }, select: { symbol: true } });
@@ -150,7 +151,7 @@ export async function tickUser(userId: string): Promise<void> {
   const market = await getMarketStatus(); // shared across all tenants, cached 60s
 
   let slotsLeft = cfg.maxConcurrentPositions - openCount;
-  let dailyLeft = cfg.maxTradesPerDay - cfg.tradesToday; // remaining trades allowed TODAY (enforced per-trade so we never overshoot the cap within one tick)
+  let dailyLeft = cfg.maxTradesPerDay > 0 ? cfg.maxTradesPerDay - cfg.tradesToday : Infinity; // remaining trades allowed TODAY (0 cap = unlimited); enforced per-trade so we never overshoot within one tick
   let availableLeft = balance.availableUsdt; // decremented as we allocate this tick
   const marginUsd = Number(cfg.marginPerTradeUsd);
   // Rank highest-confidence setups first so the best ones win the open slots.

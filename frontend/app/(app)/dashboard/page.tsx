@@ -214,6 +214,10 @@ export default function Dashboard() {
           <Card label="In Trade (margin)" value={fmt(account?.marginUsed)} />
           <LiveUnrealizedCard account={account} positions={positions} />
           <LiveTodayCard todayRealized={d.todayPnl} positions={positions} />
+          <div className="card">
+            <p className="label">Today W/L</p>
+            <p className="stat"><span className="badge-up">{d.todayWins}W</span> <span className="text-muted text-base">/</span> <span className="badge-down">{d.todayLosses}L</span></p>
+          </div>
           <Card label="ROI" value={`${stats?.roi ?? 0}%`} />
           <Card label="Realized 7D" value={fmt(d.realized7d)} signed />
           <Card label="Profit Factor" value={d.profitFactor} />
@@ -227,7 +231,7 @@ export default function Dashboard() {
           <Card label="Decisions (now)" value={String(d.decisions)} />
           <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
           <Card label="Blocked (now)" value={String(d.blocked)} />
-          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay ?? '—'}`} />
+          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay === 0 ? '∞' : (bot?.maxTradesPerDay ?? '—')}`} />
           <Card label="Volume" value={fmt(d.volume)} />
         </section>
 

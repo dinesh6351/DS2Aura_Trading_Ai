@@ -79,7 +79,7 @@ export default function SettingsPage() {
               <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
               <BinanceSection keys={keys} onChange={load} />
               <TelegramSection tg={tg} onChange={load} />
-              {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
+              {bot && <TradingConfigSection bot={bot} watchlist={watchlist} isAdmin={me?.role === 'ADMIN'} onChange={load} />}
               {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
             </>
           ) : <EmailVerifyGate email={me?.email} onVerified={load} />
@@ -455,7 +455,7 @@ function TelegramGuide() {
 }
 
 // ── Trading config ───────────────────────────────────────────────────────────
-function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watchlist: string[]; onChange: () => void }) {
+function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotCfg; watchlist: string[]; isAdmin: boolean; onChange: () => void }) {
   const [cfg, setCfg] = useState({
     scoreThreshold: bot.scoreThreshold, leverage: bot.leverage, marginPerTradeUsd: Number(bot.marginPerTradeUsd),
     slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR),
@@ -538,7 +538,28 @@ function TradingConfigSection({ bot, watchlist, onChange }: { bot: BotCfg; watch
         <Num label="Arm trailing (+%)" v={cfg.trailArmPct} onChange={set('trailArmPct')} step="0.1" />
         <Num label="Trail gap (%)" v={cfg.trailGapPct} onChange={set('trailGapPct')} step="0.1" />
         <Num label="Max positions" v={cfg.maxConcurrentPositions} onChange={set('maxConcurrentPositions')} />
-        <Num label="Max trades / day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
+        {isAdmin ? (
+          <label className="block">
+            <span className="label">Max trades / day <span className="text-accent/70">(admin)</span></span>
+            <div className="flex gap-1 mt-0.5">
+              {cfg.maxTradesPerDay === 0 ? (
+                <input readOnly value="Unlimited"
+                  className="w-full bg-bg border border-accent/40 text-accent font-medium rounded px-2 py-1" />
+              ) : (
+                <input type="number" min={1} value={cfg.maxTradesPerDay}
+                  onChange={(e) => setCfg({ ...cfg, maxTradesPerDay: Math.max(1, Number(e.target.value)) })}
+                  className="w-full bg-bg border border-green-900/40 rounded px-2 py-1" />
+              )}
+              <button type="button" title="Toggle unlimited daily trades (admin only)"
+                onClick={() => setCfg({ ...cfg, maxTradesPerDay: cfg.maxTradesPerDay === 0 ? 10 : 0 })}
+                className={`text-xs px-2 rounded whitespace-nowrap ${cfg.maxTradesPerDay === 0 ? 'btn' : 'btn opacity-60'}`}>
+                ∞ Unlimited
+              </button>
+            </div>
+          </label>
+        ) : (
+          <Num label="Max trades / day" v={cfg.maxTradesPerDay} onChange={set('maxTradesPerDay')} />
+        )}
         <Num label="Max consec. losses" v={cfg.maxConsecutiveLosses} onChange={set('maxConsecutiveLosses')} />
         <Num label="Loss cooldown (min)" v={cfg.lossCooldownMin} onChange={set('lossCooldownMin')} />
         <Num label="Margin guard (%)" v={cfg.marginGuardPct} onChange={set('marginGuardPct')} />
