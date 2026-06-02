@@ -211,6 +211,29 @@ export default function Dashboard() {
           <Card label="Open Trades" value={String(account?.openPositions ?? 0)} />
         </section>
 
+        {/* Account & Trade Detail — current settings (kept at top with the KPIs) */}
+        <section className="card">
+          <p className="label mb-2">⚙️ Account &amp; Trade Detail — current settings</p>
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-1 text-sm">
+            <Row k="Mode" v={`${bot?.mode ?? '—'} · ${bot?.status ?? '—'}`} />
+            <Row k="Watchlist" v={`${watchlist.length} symbols`} />
+            <Row k="Trade size" v={`$${bot ? num(bot.marginPerTradeUsd).toFixed(2) : '—'}${bot?.dynamicSizing ? ' (dynamic)' : ''}`} />
+            <Row k="Leverage" v={`${bot?.leverage ?? '—'}×`} />
+            <Row k="Order type" v="MARKET · FUTURES" />
+            <Row k="SL / TP" v={`${bot ? num(bot.slPercent) : '—'}% / 1:${bot ? num(bot.tpRR) : '—'}`} />
+            <Row k="Max concurrent" v={String(bot?.maxConcurrentPositions ?? '—')} />
+            <Row k="Daily trades cap" v={String(bot?.maxTradesPerDay ?? '—')} />
+            <Row k="Score threshold" v={String(bot?.scoreThreshold ?? '—')} />
+            <Row k="Loss cooldown" v={`${bot?.lossCooldownMin ?? '—'} min`} />
+            <Row k="Max consec. losses" v={String(bot?.maxConsecutiveLosses ?? '—')} />
+            <Row k="Margin guard" v={`${bot?.marginGuardPct ?? '—'}%`} />
+            <Row k="Total balance" v={fmt(account?.totalBalance)} />
+            <Row k="Available" v={fmt(account?.availableBalance)} />
+            <Row k="Margin used" v={fmt(account?.marginUsed)} />
+            <Row k="Last synced" v={account?.lastSyncedAt ? new Date(account.lastSyncedAt).toLocaleTimeString() : '—'} />
+          </div>
+        </section>
+
         {/* Open positions (live, 1s) + Protection status */}
         <section className="grid md:grid-cols-2 gap-6">
           <LivePositions positions={positions} />
@@ -491,29 +514,6 @@ export default function Dashboard() {
 
         {/* Adaptive learning (opt-in) — per-coin quality-bar tuning from your results */}
         <AdaptiveLearningCard enabled={bot?.useAdaptiveLearning} />
-
-        {/* Account & Trade Detail */}
-        <section className="card">
-          <p className="label mb-2">⚙️ Account &amp; Trade Detail — current settings</p>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-1 text-sm">
-            <Row k="Mode" v={`${bot?.mode ?? '—'} · ${bot?.status ?? '—'}`} />
-            <Row k="Watchlist" v={`${watchlist.length} symbols`} />
-            <Row k="Trade size" v={`$${bot ? num(bot.marginPerTradeUsd).toFixed(2) : '—'}${bot?.dynamicSizing ? ' (dynamic)' : ''}`} />
-            <Row k="Leverage" v={`${bot?.leverage ?? '—'}×`} />
-            <Row k="Order type" v="MARKET · FUTURES" />
-            <Row k="SL / TP" v={`${bot ? num(bot.slPercent) : '—'}% / 1:${bot ? num(bot.tpRR) : '—'}`} />
-            <Row k="Max concurrent" v={String(bot?.maxConcurrentPositions ?? '—')} />
-            <Row k="Daily trades cap" v={String(bot?.maxTradesPerDay ?? '—')} />
-            <Row k="Score threshold" v={String(bot?.scoreThreshold ?? '—')} />
-            <Row k="Loss cooldown" v={`${bot?.lossCooldownMin ?? '—'} min`} />
-            <Row k="Max consec. losses" v={String(bot?.maxConsecutiveLosses ?? '—')} />
-            <Row k="Margin guard" v={`${bot?.marginGuardPct ?? '—'}%`} />
-            <Row k="Total balance" v={fmt(account?.totalBalance)} />
-            <Row k="Available" v={fmt(account?.availableBalance)} />
-            <Row k="Margin used" v={fmt(account?.marginUsed)} />
-            <Row k="Last synced" v={account?.lastSyncedAt ? new Date(account.lastSyncedAt).toLocaleTimeString() : '—'} />
-          </div>
-        </section>
 
         {/* Bot settings + activity log */}
         <section className="grid md:grid-cols-2 gap-6">
