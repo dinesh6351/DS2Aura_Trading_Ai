@@ -74,13 +74,15 @@ export default function SettingsPage() {
         {tab === 'basic' && <BasicInfoSection me={me} onChange={load} />}
 
         {tab === 'setup' && (
-          <>
-            <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
-            <BinanceSection keys={keys} onChange={load} />
-            <TelegramSection tg={tg} onChange={load} />
-            {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
-            {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
-          </>
+          me?.emailVerified ? (
+            <>
+              <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
+              <BinanceSection keys={keys} onChange={load} />
+              <TelegramSection tg={tg} onChange={load} />
+              {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
+              {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
+            </>
+          ) : <EmailVerifyGate email={me?.email} onVerified={load} />
         )}
 
         {tab === 'coupon' && <CouponSection />}
@@ -136,6 +138,41 @@ function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
         <label className="block"><span className="label">Timezone</span><input className={inp} value={form.timezone} onChange={set('timezone')} placeholder="UTC" /></label>
       </div>
       <button className="btn w-full" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save profile'}</button>
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+    </section>
+  );
+}
+
+// ── Email verification gate (unlocks the Setup tab) ───────────────────────────
+function EmailVerifyGate({ email, onVerified }: { email?: string; onVerified: () => void }) {
+  const [code, setCode] = useState('');
+  const [dev, setDev] = useState('');
+  const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+
+  async function send() {
+    setErr(''); setNote(''); setDev(''); setBusy(true);
+    try {
+      const r = await api.post<{ sent: boolean; devCode?: string }>('/api/auth/email-otp/request');
+      if (r.devCode) { setDev(r.devCode); setNote('Email delivery isn’t set up yet — use this code:'); }
+      else setNote('A 6-digit code was sent to your email.');
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function verify() {
+    setErr(''); setBusy(true);
+    try { await api.post('/api/auth/email-otp/verify', { code: code.trim() }); onVerified(); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  return (
+    <section className="card space-y-3 max-w-md">
+      <p className="label">🔒 Verify your email to unlock Setup</p>
+      <p className="text-muted text-sm">For security, connecting a Binance key and trading stays locked until your email{email ? ` (${email})` : ''} is verified. Send yourself a 6-digit code, then enter it below.</p>
+      <button className="btn w-full" disabled={busy} onClick={send}>{busy ? '…' : 'Send verification code'}</button>
+      {dev && <p className="text-warn text-sm">Your code: <b className="font-mono text-base">{dev}</b></p>}
+      <input className={inp} placeholder="Enter 6-digit code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} maxLength={6} />
+      <button className="btn w-full" disabled={busy || code.trim().length < 4} onClick={verify}>Verify &amp; unlock</button>
       {note && <p className="text-accent text-sm">{note}</p>}
       {err && <p className="text-danger text-sm">{err}</p>}
     </section>

@@ -3,7 +3,7 @@ import * as OTPAuth from 'otpauth';
 import { Role, SubscriptionStatus, SubscriptionPlan, type AuthTokens } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../lib/jwt.js';
-import { encryptSecret, decryptSecret, randomToken, sha256 } from '../../lib/crypto.js';
+import { encryptSecret, decryptSecret, randomToken, sha256, safeEqual } from '../../lib/crypto.js';
 import { Errors } from '../../lib/http.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
@@ -46,6 +46,22 @@ async function issueTokens(
   });
 
   return { accessToken, refreshToken, expiresIn: env.JWT_ACCESS_TTL };
+}
+
+// ── Email OTP (verifies the account email; gates the Setup tab) ─────────────
+// Codes are kept in-memory (short-lived, 10 min) so no schema/migration is needed.
+const _emailOtp = new Map<string, { hash: string; expires: number; attempts: number; sentAt: number }>();
+const OTP_TTL_MS = 10 * 60_000;
+
+/**
+ * Deliver the OTP. No mailer is wired yet, so this logs the code and reports
+ * "not delivered" → the API returns the code to the user so they can verify now.
+ * When a real mailer (nodemailer + SMTP_URL, or an email API) is added here and it
+ * sends successfully, return true and the code stops being exposed.
+ */
+async function sendEmailOtp(email: string, code: string): Promise<boolean> {
+  logger.info({ email, code }, 'EMAIL OTP (delivery not configured — code shown to user)');
+  return false;
 }
 
 export const authService = {
@@ -175,6 +191,33 @@ export const authService = {
       where: { userId, id: { not: sessionId }, revokedAt: null }, data: { revokedAt: new Date() },
     });
     await prisma.auditLog.create({ data: { userId, action: 'PASSWORD_CHANGED' } });
+  },
+
+  /** Send a 6-digit email-verification OTP (throttled to one per 30s). */
+  async requestEmailOtp(userId: string): Promise<{ sent: boolean; devCode?: string }> {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (user.emailVerifiedAt) return { sent: true }; // already verified
+    const prev = _emailOtp.get(userId);
+    if (prev && Date.now() - prev.sentAt < 30_000) return { sent: true }; // throttle resends
+    const code = String(Math.floor(100_000 + Math.random() * 900_000));
+    _emailOtp.set(userId, { hash: sha256(code), expires: Date.now() + OTP_TTL_MS, attempts: 0, sentAt: Date.now() });
+    const delivered = await sendEmailOtp(user.email, code);
+    await prisma.auditLog.create({ data: { userId, action: 'EMAIL_OTP_SENT' } }).catch(() => {});
+    // Until real email delivery is wired, hand the code back so the user can verify.
+    return delivered ? { sent: true } : { sent: false, devCode: code };
+  },
+
+  /** Verify the email OTP → marks the email verified (unlocks the Setup tab). */
+  async verifyEmailOtp(userId: string, code: string): Promise<void> {
+    const rec = _emailOtp.get(userId);
+    if (!rec) throw Errors.badRequest('Request a code first.');
+    if (Date.now() > rec.expires) { _emailOtp.delete(userId); throw Errors.badRequest('Code expired — request a new one.'); }
+    if (rec.attempts >= 5) { _emailOtp.delete(userId); throw Errors.badRequest('Too many attempts — request a new code.'); }
+    rec.attempts++;
+    if (!safeEqual(rec.hash, sha256(code.trim()))) throw Errors.badRequest('Incorrect code.');
+    _emailOtp.delete(userId);
+    await prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+    await prisma.auditLog.create({ data: { userId, action: 'EMAIL_VERIFIED' } }).catch(() => {});
   },
 
   // ── 2FA (TOTP) ──────────────────────────────────────────────────────────

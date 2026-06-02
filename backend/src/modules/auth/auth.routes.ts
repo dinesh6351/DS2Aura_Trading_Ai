@@ -70,6 +70,16 @@ authRouter.post('/logout', authenticate, asyncHandler(async (req, res) => {
   return ok(res, { loggedOut: true });
 }));
 
+/** Email OTP — request + verify (gates the Setup tab). */
+authRouter.post('/email-otp/request', authenticate, asyncHandler(async (req, res) =>
+  ok(res, await authService.requestEmailOtp((req as AuthedRequest).auth.userId))));
+
+authRouter.post('/email-otp/verify', authenticate, asyncHandler(async (req, res) => {
+  const code = z.object({ code: z.string().min(4).max(8) }).parse(req.body).code;
+  await authService.verifyEmailOtp((req as AuthedRequest).auth.userId, code);
+  return ok(res, { verified: true });
+}));
+
 /** Change password (logged-in). Verifies current, revokes other sessions. */
 authRouter.post('/change-password', authenticate, asyncHandler(async (req, res) => {
   const r = req as AuthedRequest;
