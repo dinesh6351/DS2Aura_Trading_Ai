@@ -138,13 +138,14 @@ export default function Dashboard() {
     api.get<{ id: string }>('/api/me').then(setMe).catch(() => {});
   }, [load, loadSignals, loadIntel]);
 
-  // Steady auto-refresh regardless of bot run state — account/positions are
-  // live-synced server-side (15s cache), so a 20s poll keeps the cards live even
-  // when the bot is stopped. Signals + intelligence are heavier → 60s.
+  // Steady auto-refresh so every card stays live WITHOUT a manual refresh, even
+  // when the realtime WS isn't configured in prod. Account/positions/trades/log are
+  // server-cached (~15s), signals are cached 20s server-side — so polling all of
+  // them on a tight cadence is cheap (mostly cache hits) yet feels live.
   useEffect(() => {
-    const t = setInterval(load, 20_000);
-    const t2 = setInterval(loadSignals, 60_000);
-    const t3 = setInterval(loadIntel, 60_000);
+    const t = setInterval(load, 15_000);          // balances · positions · trades · per-symbol · performance · activity log
+    const t2 = setInterval(loadSignals, 20_000);  // live signals · top opportunity · next trade (cached 20s server-side)
+    const t3 = setInterval(loadIntel, 45_000);    // AI strategy / learning / news (heavier)
     return () => { clearInterval(t); clearInterval(t2); clearInterval(t3); };
   }, [load, loadSignals, loadIntel]);
 
