@@ -70,6 +70,17 @@ authRouter.post('/logout', authenticate, asyncHandler(async (req, res) => {
   return ok(res, { loggedOut: true });
 }));
 
+/** Change password (logged-in). Verifies current, revokes other sessions. */
+authRouter.post('/change-password', authenticate, asyncHandler(async (req, res) => {
+  const r = req as AuthedRequest;
+  const { currentPassword, newPassword } = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8).max(128),
+  }).parse(req.body);
+  await authService.changePassword(r.auth.userId, r.auth.sessionId, currentPassword, newPassword);
+  return ok(res, { changed: true });
+}));
+
 // ── 2FA ────────────────────────────────────────────────────────────────────
 authRouter.post('/2fa/setup', authenticate, asyncHandler(async (req, res) => {
   const r = req as AuthedRequest;

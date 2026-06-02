@@ -15,20 +15,30 @@ interface BotCfg {
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean;
 }
 
+type Tab = 'basic' | 'setup' | 'coupon' | 'password';
+interface Me {
+  id: string; email: string; role: string; status: string; emailVerified: boolean;
+  profile: { fullName: string; mobile: string | null; country: string | null; timezone: string } | null;
+  subscription: { plan: string; status: string } | null;
+}
+
 export default function SettingsPage() {
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [tg, setTg] = useState<TgStatus>();
   const [bot, setBot] = useState<BotCfg>();
   const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [me, setMe] = useState<Me>();
+  const [tab, setTab] = useState<Tab>('basic');
 
   const load = useCallback(async () => {
-    const [k, t, b, wl] = await Promise.all([
+    const [k, t, b, wl, m] = await Promise.all([
       api.get<KeyRow[]>('/api/apikeys').catch(() => []),
       api.get<TgStatus>('/api/notifications/telegram').catch(() => undefined),
       api.get<BotCfg>('/api/bot/status').catch(() => undefined),
       api.get<string[]>('/api/trading/watchlist').catch(() => []),
+      api.get<Me>('/api/me').catch(() => undefined),
     ]);
-    setKeys(k); setTg(t); setBot(b); setWatchlist(wl);
+    setKeys(k); setTg(t); setBot(b); setWatchlist(wl); setMe(m);
   }, []);
 
   useEffect(() => { api.refresh().then(load).catch(() => { window.location.href = '/login'; }); }, [load]);
@@ -36,24 +46,147 @@ export default function SettingsPage() {
   const hasKey = keys.some((k) => k.status === 'VALID');
   const ready = hasKey; // bot can start once a valid key exists
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'basic', label: '👤 Basic Information' },
+    { id: 'setup', label: '⚙️ Setup' },
+    { id: 'coupon', label: '🎟️ Coupon' },
+    { id: 'password', label: '🔒 Change Password' },
+  ];
+
   return (
     <>
       <AppNav active="settings" />
       <main className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
         <header>
-          <h1 className="text-accent text-xl font-bold">⚙️ Setup &amp; Credentials</h1>
-          <p className="text-muted text-sm">Connect your own Binance account &amp; Telegram bot, tune the strategy, test in Paper mode, then go Live. Each step validates before saving — no guesswork.</p>
+          <h1 className="text-accent text-xl font-bold">👤 Profile</h1>
+          <p className="text-muted text-sm">Your account details, trading setup, coupons and security — all in one place.</p>
         </header>
 
-        <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
+        <nav className="flex flex-wrap gap-1 border-b border-green-900/30 overflow-x-auto">
+          {tabs.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`px-3 py-2 text-sm rounded-t border-b-2 -mb-px whitespace-nowrap transition ${tab === t.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-accent'}`}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
 
-        <BinanceSection keys={keys} onChange={load} />
-        <TelegramSection tg={tg} onChange={load} />
-        {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
-        {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
+        {tab === 'basic' && <BasicInfoSection me={me} onChange={load} />}
+
+        {tab === 'setup' && (
+          <>
+            <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
+            <BinanceSection keys={keys} onChange={load} />
+            <TelegramSection tg={tg} onChange={load} />
+            {bot && <TradingConfigSection bot={bot} watchlist={watchlist} onChange={load} />}
+            {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
+          </>
+        )}
+
+        {tab === 'coupon' && <CouponSection />}
+        {tab === 'password' && <ChangePasswordSection />}
       </main>
     </>
   );
+}
+
+// ── Basic information (profile) ───────────────────────────────────────────────
+function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
+  const [form, setForm] = useState({ fullName: '', mobile: '', country: '', timezone: 'UTC' });
+  const [loaded, setLoaded] = useState(false);
+  const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (me?.profile && !loaded) {
+      setForm({
+        fullName: me.profile.fullName ?? '', mobile: me.profile.mobile ?? '',
+        country: me.profile.country ?? '', timezone: me.profile.timezone ?? 'UTC',
+      });
+      setLoaded(true);
+    }
+  }, [me, loaded]);
+
+  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
+
+  async function save() {
+    setErr(''); setNote(''); setBusy(true);
+    try {
+      await api.patch('/api/me/profile', {
+        fullName: form.fullName, mobile: form.mobile || undefined,
+        country: form.country || undefined, timezone: form.timezone || undefined,
+      });
+      setNote('✅ Profile saved'); onChange(); setTimeout(() => setNote(''), 2500);
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  return (
+    <section className="card space-y-4">
+      <p className="label">👤 Basic information</p>
+      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+        <KV k="Email" v={me?.email ?? '—'} />
+        <KV k="Account role" v={me?.role ?? '—'} />
+        <KV k="Plan" v={me?.subscription ? `${me.subscription.plan} · ${me.subscription.status}` : '—'} />
+        <KV k="Email verified" v={me?.emailVerified ? 'Yes' : 'No'} />
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3 border-t border-green-900/20 pt-3">
+        <label className="block"><span className="label">Full name</span><input className={inp} value={form.fullName} onChange={set('fullName')} placeholder="Your name" /></label>
+        <label className="block"><span className="label">Mobile</span><input className={inp} value={form.mobile} onChange={set('mobile')} placeholder="+91 …" /></label>
+        <label className="block"><span className="label">Country</span><input className={inp} value={form.country} onChange={set('country')} placeholder="Country" /></label>
+        <label className="block"><span className="label">Timezone</span><input className={inp} value={form.timezone} onChange={set('timezone')} placeholder="UTC" /></label>
+      </div>
+      <button className="btn w-full" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save profile'}</button>
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+    </section>
+  );
+}
+
+// ── Coupon (Phase-1 placeholder; redeem/discount wired in the coupon phase) ────
+function CouponSection() {
+  return (
+    <section className="card space-y-2">
+      <p className="label">🎟️ Coupons &amp; discounts</p>
+      <p className="text-muted text-sm">Redeem a coupon code, or see a discount your admin applied to your account. Discounts apply to your next invoice.</p>
+      <p className="text-warn text-xs">Coupon redemption is being activated and will appear here shortly.</p>
+    </section>
+  );
+}
+
+// ── Change password ───────────────────────────────────────────────────────────
+function ChangePasswordSection() {
+  const [cur, setCur] = useState(''); const [next, setNext] = useState(''); const [confirm, setConfirm] = useState('');
+  const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+
+  async function submit() {
+    setErr(''); setNote('');
+    if (next.length < 8) { setErr('New password must be at least 8 characters.'); return; }
+    if (next !== confirm) { setErr('New password and confirmation do not match.'); return; }
+    setBusy(true);
+    try {
+      await api.post('/api/auth/change-password', { currentPassword: cur, newPassword: next });
+      setNote('✅ Password changed. Your other devices have been signed out.');
+      setCur(''); setNext(''); setConfirm('');
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+
+  return (
+    <section className="card space-y-3 max-w-md">
+      <p className="label">🔒 Change password</p>
+      <p className="text-muted text-xs">For your security, changing your password signs out all your other devices.</p>
+      <input className={inp} type="password" placeholder="Current password" value={cur} onChange={(e) => setCur(e.target.value)} />
+      <input className={inp} type="password" placeholder="New password (min 8 chars)" value={next} onChange={(e) => setNext(e.target.value)} />
+      <input className={inp} type="password" placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+      <button className="btn w-full" disabled={busy || !cur || !next || !confirm} onClick={submit}>{busy ? 'Updating…' : 'Update password'}</button>
+      {note && <p className="text-accent text-sm">{note}</p>}
+      {err && <p className="text-danger text-sm">{err}</p>}
+    </section>
+  );
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return <div className="flex justify-between gap-3"><span className="text-muted">{k}</span><span className="text-right">{v}</span></div>;
 }
 
 // ── Setup checklist ──────────────────────────────────────────────────────────

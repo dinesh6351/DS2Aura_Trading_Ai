@@ -157,6 +157,26 @@ export const authService = {
     });
   },
 
+  /**
+   * Change the account password. Verifies the CURRENT password, then revokes
+   * every OTHER session (so a stolen/old device is logged out) while keeping the
+   * session that made the change.
+   */
+  async changePassword(userId: string, sessionId: string, currentPassword: string, newPassword: string) {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.passwordHash) throw Errors.badRequest('This account signs in with Google/social login and has no password to change.');
+    const valid = await argon2.verify(user.passwordHash, currentPassword);
+    if (!valid) throw Errors.unauthorized('Current password is incorrect');
+    if (await argon2.verify(user.passwordHash, newPassword)) {
+      throw Errors.badRequest('New password must be different from the current one.');
+    }
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash: await argon2.hash(newPassword) } });
+    await prisma.session.updateMany({
+      where: { userId, id: { not: sessionId }, revokedAt: null }, data: { revokedAt: new Date() },
+    });
+    await prisma.auditLog.create({ data: { userId, action: 'PASSWORD_CHANGED' } });
+  },
+
   // ── 2FA (TOTP) ──────────────────────────────────────────────────────────
   async beginEnable2fa(userId: string, accountLabel: string) {
     const secret = new OTPAuth.Secret({ size: 20 }).base32;

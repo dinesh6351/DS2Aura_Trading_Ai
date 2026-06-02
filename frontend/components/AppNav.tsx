@@ -33,7 +33,7 @@ export function AppNav({ active }: { active?: 'dashboard' | 'chart' | 'settings'
         <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto">
           {link('/dashboard', 'Dashboard', 'dashboard')}
           {link('/chart/BTCUSDT', 'Charts', 'chart')}
-          {link('/settings', 'Setup', 'settings')}
+          {link('/settings', 'Profile', 'settings')}
           {role === 'ADMIN' && link('/admin', 'Admin', 'admin')}
           <button onClick={logout} className="px-2 sm:px-3 py-1.5 rounded text-sm whitespace-nowrap text-muted hover:text-danger transition">Logout</button>
         </div>
