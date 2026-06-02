@@ -101,28 +101,24 @@ export default function Dashboard() {
   }, []);
 
   const load = useCallback(async () => {
-    // Each call is independently caught so ONE failing endpoint (e.g. a billing
-    // hiccup) can never blank the whole dashboard — the rest still renders.
-    const [a, s, b, p, u, mk, tr, pf, lg, wl, bp] = await Promise.all([
-      api.get<Account>('/api/trading/account').catch(() => undefined),
-      api.get<Stats>('/api/trading/stats').catch(() => undefined),
-      api.get<BotCfg>('/api/bot/status').catch(() => undefined),
-      api.get<Position[]>('/api/trading/positions').catch(() => undefined),
-      api.get<Usage>('/api/billing/usage').catch(() => undefined),
-      api.get<Market>('/api/trading/market-status').catch(() => undefined),
-      api.get<Trade[]>('/api/trading/trades').catch(() => [] as Trade[]),
-      api.get<Perf[]>('/api/trading/performance').catch(() => [] as Perf[]),
-      api.get<LogItem[]>('/api/bot/log').catch(() => [] as LogItem[]),
-      api.get<string[]>('/api/trading/watchlist').catch(() => [] as string[]),
-      api.get<BinancePnl>('/api/trading/binance-pnl').catch(() => undefined),
-    ]);
-    // Positions: only overwrite on a SUCCESSFUL response ([] is a valid "no positions").
-    // On a fetch error (p === undefined) keep the last known list so an open trade
-    // never flickers to "No open positions" on a transient hiccup.
-    if (a) setAccount(a); if (s) setStats(s); if (b) setBot(b);
-    if (p) setPositions(p); if (u) setUsage(u); if (mk) setMarket(mk);
-    setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl); if (bp) setBpnl(bp);
+    // Render each card the MOMENT its own data arrives — don't wait for the slowest
+    // (Binance) call, which otherwise leaves every card blank for 10–15s on load.
+    // Each call sets its state independently; a failed one keeps the last value.
+    const tasks = [
+      api.get<Account>('/api/trading/account').then(setAccount),
+      api.get<Stats>('/api/trading/stats').then(setStats),
+      api.get<BotCfg>('/api/bot/status').then(setBot),
+      api.get<Position[]>('/api/trading/positions').then((p) => { if (p) setPositions(p); }),
+      api.get<Usage>('/api/billing/usage').then(setUsage),
+      api.get<Market>('/api/trading/market-status').then(setMarket),
+      api.get<Trade[]>('/api/trading/trades').then(setTrades),
+      api.get<Perf[]>('/api/trading/performance').then(setPerf),
+      api.get<LogItem[]>('/api/bot/log').then(setLog),
+      api.get<string[]>('/api/trading/watchlist').then(setWatchlist),
+      api.get<BinancePnl>('/api/trading/binance-pnl').then(setBpnl),
+    ];
     setLastLoad(Date.now());
+    await Promise.allSettled(tasks); // let callers (refreshAll/botAction) await completion
   }, []);
 
   async function subscribe(plan: 'BASIC' | 'PRO' = 'BASIC') { await api.post('/api/billing/subscribe', { plan }); await load(); }

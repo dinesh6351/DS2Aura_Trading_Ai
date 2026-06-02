@@ -23,20 +23,29 @@ const _pnlCache = new Map<string, { at: number; data: BinancePnl }>();
 
 interface IncomeRow { symbol: string; income: string; time: number; incomeType: string }
 const _incomeCache = new Map<string, { at: number; data: IncomeRow[] }>();
-/** Raw Binance income (last 7d), cached 60s per user — powers per-trade fee/funding. */
-async function userIncome7d(userId: string): Promise<IncomeRow[]> {
-  const c = _incomeCache.get(userId);
-  if (c && Date.now() - c.at < 60_000) return c.data;
-  let data: IncomeRow[] = [];
-  const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID' } });
-  if (key && !isBanned()) {
-    try {
+const _incomeInFlight = new Set<string>();
+/** Background refresh of the income cache — never blocks a request. */
+async function refreshIncome(userId: string): Promise<void> {
+  if (_incomeInFlight.has(userId)) return;
+  _incomeInFlight.add(userId);
+  try {
+    const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID' } });
+    if (key && !isBanned()) {
       const client = new BinanceClient(await apiKeyService.getDecryptedCreds(userId));
-      data = await client.getAllIncome(Date.now() - 7 * 864e5);
-    } catch (e) { logger.warn({ userId, e }, 'income fetch failed (per-trade fees)'); }
-  }
-  _incomeCache.set(userId, { at: Date.now(), data });
-  return data;
+      const data = await client.getAllIncome(Date.now() - 7 * 864e5);
+      _incomeCache.set(userId, { at: Date.now(), data });
+    } else {
+      _incomeCache.set(userId, { at: Date.now(), data: _incomeCache.get(userId)?.data ?? [] });
+    }
+  } catch (e) { logger.warn({ userId, e }, 'income refresh failed (per-trade fees)'); }
+  finally { _incomeInFlight.delete(userId); }
+}
+/** Cached Binance income (last 7d). Returns immediately (stale-while-revalidate) so
+ *  fee enrichment never blocks the trades request; fees fill in on the next poll. */
+function userIncome7d(userId: string): IncomeRow[] {
+  const c = _incomeCache.get(userId);
+  if (!c || Date.now() - c.at >= 60_000) void refreshIncome(userId); // refresh in the background
+  return c?.data ?? [];
 }
 
 async function liveSnapshot(userId: string): Promise<LiveSnapshot> {
@@ -126,7 +135,7 @@ export const tradingService = {
     // Enrich each trade with its REAL Binance fee + funding, matched from the income
     // feed by symbol within the trade's open→close window (the bot never stacks a
     // symbol, so the match is unambiguous). Falls back to 0 if income isn't available.
-    const income = await userIncome7d(userId);
+    const income = userIncome7d(userId); // cached, non-blocking
     return rows.map((r) => {
       const o = r.openedAt.getTime() - 3000, c = r.closedAt.getTime() + 3000;
       let fee = 0, funding = 0;
