@@ -96,20 +96,23 @@ export default function Dashboard() {
   }, []);
 
   const load = useCallback(async () => {
+    // Each call is independently caught so ONE failing endpoint (e.g. a billing
+    // hiccup) can never blank the whole dashboard — the rest still renders.
     const [a, s, b, p, u, mk, tr, pf, lg, wl] = await Promise.all([
-      api.get<Account>('/api/trading/account'),
-      api.get<Stats>('/api/trading/stats'),
-      api.get<BotCfg>('/api/bot/status'),
-      api.get<Position[]>('/api/trading/positions'),
-      api.get<Usage>('/api/billing/usage'),
-      api.get<Market>('/api/trading/market-status'),
-      api.get<Trade[]>('/api/trading/trades'),
-      api.get<Perf[]>('/api/trading/performance'),
-      api.get<LogItem[]>('/api/bot/log'),
-      api.get<string[]>('/api/trading/watchlist'),
+      api.get<Account>('/api/trading/account').catch(() => undefined),
+      api.get<Stats>('/api/trading/stats').catch(() => undefined),
+      api.get<BotCfg>('/api/bot/status').catch(() => undefined),
+      api.get<Position[]>('/api/trading/positions').catch(() => [] as Position[]),
+      api.get<Usage>('/api/billing/usage').catch(() => undefined),
+      api.get<Market>('/api/trading/market-status').catch(() => undefined),
+      api.get<Trade[]>('/api/trading/trades').catch(() => [] as Trade[]),
+      api.get<Perf[]>('/api/trading/performance').catch(() => [] as Perf[]),
+      api.get<LogItem[]>('/api/bot/log').catch(() => [] as LogItem[]),
+      api.get<string[]>('/api/trading/watchlist').catch(() => [] as string[]),
     ]);
-    setAccount(a); setStats(s); setBot(b); setPositions(p); setUsage(u);
-    setMarket(mk); setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl);
+    if (a) setAccount(a); if (s) setStats(s); if (b) setBot(b);
+    setPositions(p); if (u) setUsage(u); if (mk) setMarket(mk);
+    setTrades(tr); setPerf(pf); setLog(lg); setWatchlist(wl);
     setLastLoad(Date.now());
   }, []);
 
