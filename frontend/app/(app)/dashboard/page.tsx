@@ -38,6 +38,7 @@ interface Trade {
   id: string; symbol: string; side: string; entryPrice: string; exitPrice: string; quantity: string;
   leverage: number; grossPnl: string; feeUsd: string; netPnl: string; rr: string | null;
   exitReason: string | null; openedAt: string; closedAt: string; durationSec: number | null;
+  realFee?: number; funding?: number; // actual Binance commission + funding (matched from income)
 }
 interface Perf { symbol: string; trades: number; wins: number; winRate: number; netPnl: number; volume: number; riskScore: number; }
 interface LogItem { id: string; title: string; body: string; createdAt: string; }
@@ -247,7 +248,7 @@ export default function Dashboard() {
 
         {/* Open positions (live, 1s) + Protection status */}
         <section className="grid md:grid-cols-2 gap-6">
-          <LivePositions positions={positions} />
+          <LivePositions positions={positions} onClosed={load} />
           <div className="card">
             <p className="label mb-2">🛡️ Protection Status — SL/TP per open position</p>
             {positions.length === 0 ? (
@@ -810,8 +811,15 @@ function useLivePrices(symbols: string[]): Record<string, number> {
  * locally from the 1s price feed. Self-contained so the tick re-renders just this
  * card — the rest of the (heavy) dashboard stays still.
  */
-function LivePositions({ positions }: { positions: Position[] }) {
+function LivePositions({ positions, onClosed }: { positions: Position[]; onClosed: () => void }) {
   const prices = useLivePrices(positions.map((p) => p.symbol));
+  const [busy, setBusy] = useState('');
+  async function closeNow(p: Position) {
+    if (!confirm(`Close ${p.side} ${p.symbol} now at market price?`)) return;
+    setBusy(p.id);
+    try { await api.post(`/api/trading/positions/${p.id}/close`); onClosed(); }
+    catch (e) { alert((e as Error).message); } finally { setBusy(''); }
+  }
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-2">
@@ -820,7 +828,7 @@ function LivePositions({ positions }: { positions: Position[] }) {
       </div>
       {positions.length === 0 ? <Empty>No open positions</Empty> : (
         <table className="w-full text-sm">
-          <thead><tr className="text-muted text-xs"><th className="text-left">Symbol</th><th>Entry → Mark</th><th>PnL %</th><th>ROE</th><th>PnL $</th><th>SL/TP</th></tr></thead>
+          <thead><tr className="text-muted text-xs"><th className="text-left">Symbol</th><th>Entry → Mark</th><th>PnL %</th><th>ROE</th><th>PnL $</th><th>SL/TP</th><th></th></tr></thead>
           <tbody>{positions.map((p) => {
             const long = p.side === 'LONG';
             const entry = num(p.entryPrice);
@@ -838,6 +846,7 @@ function LivePositions({ positions }: { positions: Position[] }) {
                 <td className={`text-center text-xs ${cls}`}>{roe >= 0 ? '+' : ''}{roe.toFixed(1)}%</td>
                 <td className={`text-right ${cls}`}>{usd >= 0 ? '+' : ''}{usd.toFixed(3)}</td>
                 <td className="text-center text-xs text-muted">{p.stopLoss ? num(p.stopLoss).toFixed(2) : '—'}/{p.takeProfit ? num(p.takeProfit).toFixed(2) : '—'}</td>
+                <td className="text-right"><button className="btn-danger text-xs disabled:opacity-40" disabled={busy === p.id} onClick={() => closeNow(p)}>{busy === p.id ? '…' : '✕ Close'}</button></td>
               </tr>
             );
           })}</tbody>
@@ -1109,7 +1118,10 @@ function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: st
   return <div className={`card ${border}`}><p className="text-sm"><span className="mr-1">{icon}</span>{text}</p></div>;
 }
 function TradeReasonCard({ t }: { t: TradeReason }) {
-  const net = num(t.netPnl);
+  const gross = num(t.grossPnl);         // price-move P&L (before fees)
+  const fee = num(t.realFee);            // actual Binance commission (negative), 0 if not available
+  const funding = num(t.funding);        // actual funding (±), 0 if none
+  const actual = gross + fee + funding;  // true after-fee P&L
   const qty = num(t.quantity);
   const entry = num(t.entryPrice);
   const exit = num(t.exitPrice);
@@ -1123,7 +1135,7 @@ function TradeReasonCard({ t }: { t: TradeReason }) {
       <p className="font-bold flex items-center gap-2">
         {t.symbol} <span className={t.side === 'LONG' ? 'badge-up' : 'badge-down'}>{t.side}</span>
         <span className="text-xs text-muted">{t.leverage}×</span>
-        <span className={`ml-auto ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
+        <span className={`ml-auto ${actual >= 0 ? 'badge-up' : 'badge-down'}`}>{actual >= 0 ? '+' : ''}${actual.toFixed(3)}</span>
       </p>
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-2">
         <span className="text-muted">Entry price</span><span className="text-right">{entry.toFixed(4)}</span>
@@ -1131,7 +1143,10 @@ function TradeReasonCard({ t }: { t: TradeReason }) {
         <span className="text-muted">Entry value</span><span className="text-right">${entryVal.toFixed(2)}</span>
         <span className="text-muted">Exit value</span><span className="text-right">${exitVal.toFixed(2)}</span>
         <span className="text-muted">Qty · Margin</span><span className="text-right">{qty} · ${margin.toFixed(2)}</span>
-        <span className="text-muted font-bold">P&L</span><span className={`text-right font-bold ${net >= 0 ? 'badge-up' : 'badge-down'}`}>{net >= 0 ? '+' : ''}${net.toFixed(3)}</span>
+        <span className="text-muted">P&L (price)</span><span className={`text-right ${gross >= 0 ? 'text-accent' : 'text-danger'}`}>{gross >= 0 ? '+' : ''}${gross.toFixed(3)}</span>
+        <span className="text-muted">Binance fee</span><span className="text-right text-danger">{fee === 0 ? '—' : `-$${Math.abs(fee).toFixed(3)}`}</span>
+        {funding !== 0 && (<><span className="text-muted">Funding</span><span className={`text-right ${funding >= 0 ? 'text-accent' : 'text-danger'}`}>{funding >= 0 ? '+' : ''}${funding.toFixed(3)}</span></>)}
+        <span className="text-muted font-bold">Actual P&L</span><span className={`text-right font-bold ${actual >= 0 ? 'badge-up' : 'badge-down'}`}>{actual >= 0 ? '+' : ''}${actual.toFixed(3)}</span>
       </div>
       <p className="text-xs text-muted mt-1.5 border-t border-green-900/20 pt-1.5">
         {t.exitReason} · {dur}{t.rr ? ` · R:R ${num(t.rr).toFixed(1)}` : ''} · {new Date(t.closedAt).toLocaleTimeString()}

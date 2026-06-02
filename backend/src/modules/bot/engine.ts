@@ -2,6 +2,7 @@ import type { BotConfig } from '@prisma/client';
 import { PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
+import { Errors } from '../../lib/http.js';
 import { BinanceClient, floorToStep, roundToTick, type Candle } from '../binance/binance.client.js';
 import { getMarketStatus, type MarketStatus } from '../binance/market.service.js';
 import { apiKeyService } from '../apikeys/apikeys.service.js';
@@ -504,3 +505,34 @@ async function notify(userId: string, title: string, body: string) {
 
 // crude qty rounding; replace with per-symbol stepSize from exchangeInfo in prod
 function roundQty(q: number): number { return Math.floor(q * 1e3) / 1e3; }
+
+/**
+ * Manually close an OPEN position (user-initiated from the dashboard). LIVE: places
+ * a reduceOnly market close on Binance + cancels resting orders; PAPER: closes the
+ * simulated position. Records it to trade history with reason MANUAL.
+ */
+export async function manualClosePosition(userId: string, idOrSymbol: string): Promise<{ pnl: number; symbol: string }> {
+  const cfg = await prisma.botConfig.findUnique({ where: { userId } });
+  if (!cfg) throw Errors.notFound('No bot config');
+  let pos = await prisma.position.findFirst({ where: { id: idOrSymbol, userId, status: 'OPEN' } })
+    .catch(() => null); // idOrSymbol may be a symbol (not a uuid) → invalid-uuid query throws
+  if (!pos) pos = await prisma.position.findFirst({ where: { userId, symbol: idOrSymbol, status: 'OPEN' } });
+  if (!pos) throw Errors.notFound('Open position not found');
+
+  const long = pos.side === 'LONG';
+  let mark = Number(pos.markPrice ?? pos.entryPrice);
+  try { const px = await BinanceClient.tickerPrices([pos.symbol]); const m = px[pos.symbol]; if (m) mark = m; } catch { /* keep last */ }
+
+  if (!cfg.paperTrading) {
+    let client: BinanceClient;
+    try { client = new BinanceClient(await apiKeyService.getDecryptedCreds(userId)); }
+    catch { throw Errors.badRequest('No valid Binance API key on file'); }
+    try {
+      await client.marketOrder(pos.symbol, long ? 'SELL' : 'BUY', Number(pos.quantity), true);
+    } catch (e) { logger.error({ e, pos: pos.id }, 'manual close failed'); throw Errors.upstream('Could not close the position on Binance'); }
+    await client.cancelAllOpenOrders(pos.symbol);
+  }
+  await closePosition(userId, cfg, pos, mark, 'MANUAL');
+  const grossPnl = (long ? mark - Number(pos.entryPrice) : Number(pos.entryPrice) - mark) * Number(pos.quantity);
+  return { pnl: grossPnl, symbol: pos.symbol };
+}

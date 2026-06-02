@@ -7,6 +7,7 @@ import { ok } from '../../lib/http.js';
 import { tradingService } from './trading.service.js';
 import { getMarketStatus } from '../binance/market.service.js';
 import { BinanceClient } from '../binance/binance.client.js';
+import { manualClosePosition } from '../bot/engine.js';
 import {
   aiTradePlan, multiTfSupportResistance, multiTfBias, snapshot, signalBreakdown, newsResearch,
   signalsOverview, pivotLevels, multiTfTable,
@@ -20,6 +21,9 @@ const uid = (req: unknown) => (req as AuthedRequest).auth.userId;
 // ── Dashboard data ──────────────────────────────────────────────────────────
 tradingRouter.get('/account', asyncHandler(async (req, res) => ok(res, await tradingService.account(uid(req)))));
 tradingRouter.get('/positions', asyncHandler(async (req, res) => ok(res, await tradingService.positions(uid(req)))));
+/** POST /api/trading/positions/:id/close — user-initiated manual close (market). */
+tradingRouter.post('/positions/:id/close', asyncHandler(async (req, res) =>
+  ok(res, await manualClosePosition(uid(req), req.params.id!))));
 tradingRouter.get('/trades', asyncHandler(async (req, res) => ok(res, await tradingService.trades(uid(req)))));
 tradingRouter.get('/stats', asyncHandler(async (req, res) => ok(res, await tradingService.stats(uid(req)))));
 tradingRouter.get('/binance-pnl', asyncHandler(async (req, res) => ok(res, await tradingService.binancePnl(uid(req)))));

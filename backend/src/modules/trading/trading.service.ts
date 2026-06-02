@@ -21,6 +21,24 @@ interface PnlBucket { net: number; realizedPnl: number; fees: number; funding: n
 interface BinancePnl { live: boolean; paper?: boolean; today?: PnlBucket; week?: PnlBucket }
 const _pnlCache = new Map<string, { at: number; data: BinancePnl }>();
 
+interface IncomeRow { symbol: string; income: string; time: number; incomeType: string }
+const _incomeCache = new Map<string, { at: number; data: IncomeRow[] }>();
+/** Raw Binance income (last 7d), cached 60s per user — powers per-trade fee/funding. */
+async function userIncome7d(userId: string): Promise<IncomeRow[]> {
+  const c = _incomeCache.get(userId);
+  if (c && Date.now() - c.at < 60_000) return c.data;
+  let data: IncomeRow[] = [];
+  const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID' } });
+  if (key && !isBanned()) {
+    try {
+      const client = new BinanceClient(await apiKeyService.getDecryptedCreds(userId));
+      data = await client.getAllIncome(Date.now() - 7 * 864e5);
+    } catch (e) { logger.warn({ userId, e }, 'income fetch failed (per-trade fees)'); }
+  }
+  _incomeCache.set(userId, { at: Date.now(), data });
+  return data;
+}
+
 async function liveSnapshot(userId: string): Promise<LiveSnapshot> {
   const cached = _liveCache.get(userId);
   if (cached && Date.now() - cached.at < 15_000) return cached.data;
@@ -101,8 +119,25 @@ export const tradingService = {
     });
   },
 
-  trades(userId: string, limit = 100) {
-    return prisma.tradeHistory.findMany({ where: { userId }, orderBy: { closedAt: 'desc' }, take: limit });
+  async trades(userId: string, limit = 100) {
+    const rows = await prisma.tradeHistory.findMany({ where: { userId }, orderBy: { closedAt: 'desc' }, take: limit });
+    const cfg = await prisma.botConfig.findUnique({ where: { userId }, select: { paperTrading: true } });
+    if (cfg?.paperTrading || !rows.length) return rows.map((r) => ({ ...r, realFee: 0, funding: 0 }));
+    // Enrich each trade with its REAL Binance fee + funding, matched from the income
+    // feed by symbol within the trade's open→close window (the bot never stacks a
+    // symbol, so the match is unambiguous). Falls back to 0 if income isn't available.
+    const income = await userIncome7d(userId);
+    return rows.map((r) => {
+      const o = r.openedAt.getTime() - 3000, c = r.closedAt.getTime() + 3000;
+      let fee = 0, funding = 0;
+      for (const i of income) {
+        if (i.symbol !== r.symbol || i.time < o || i.time > c) continue;
+        const v = Number(i.income);
+        if (i.incomeType === 'COMMISSION') fee += v;
+        else if (i.incomeType === 'FUNDING_FEE') funding += v;
+      }
+      return { ...r, realFee: +fee.toFixed(6), funding: +funding.toFixed(6) };
+    });
   },
 
   /**
