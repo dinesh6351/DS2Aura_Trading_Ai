@@ -221,7 +221,7 @@ model ApiKey {
   status          ApiKeyStatus @default(UNVERIFIED)
   canTrade        Boolean      @default(false)
   canWithdraw     Boolean      @default(false) // we WARN loudly if true
-  binanceUid      String?      // Binance account UID — used for trial dup-prevention
+  binanceUid      String?      // SHA-256 fingerprint of the API key — enforces one Binance account = one user (trial dup-prevention)
   lastValidatedAt DateTime?
   lastError       String?
   createdAt       DateTime     @default(now())

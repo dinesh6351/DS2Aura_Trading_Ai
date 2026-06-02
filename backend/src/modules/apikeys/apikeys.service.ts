@@ -1,7 +1,8 @@
 import { prisma } from '../../lib/prisma.js';
-import { encryptSecret, decryptSecret, maskKey } from '../../lib/crypto.js';
+import { encryptSecret, decryptSecret, maskKey, sha256 } from '../../lib/crypto.js';
 import { BinanceClient, type BinanceCreds } from '../binance/binance.client.js';
 import { Errors } from '../../lib/http.js';
+import { logger } from '../../lib/logger.js';
 
 /**
  * Stores each tenant's Binance keys ENCRYPTED (AES-256-GCM) and hands decrypted
@@ -20,18 +21,32 @@ export const apiKeyService = {
     }
     if (!perms.canTrade) throw Errors.badRequest('This key cannot trade futures. Enable "Futures" permission.');
 
+    // ── One Binance account = one user ──────────────────────────────────────
+    // A SHA-256 of the API key fingerprints the Binance account. Reject it if the
+    // SAME key is already linked to a DIFFERENT, non-revoked user, so one Binance
+    // account can't be used to farm multiple free trials across signups.
+    const fingerprint = sha256(apiKey);
+    const clash = await prisma.apiKey.findFirst({
+      where: { binanceUid: fingerprint, userId: { not: userId }, status: { not: 'REVOKED' } },
+      select: { id: true },
+    });
+    if (clash) {
+      throw Errors.conflict('This Binance API key is already connected to another account. Each Binance account can be linked to only one user — disconnect it from the other account first, or use a key from a different Binance account.');
+    }
+
     const k = encryptSecret(apiKey);
     const s = encryptSecret(secret);
     const row = await prisma.apiKey.upsert({
       where: { userId_exchange_label: { userId, exchange: 'BINANCE_FUTURES', label } },
       create: {
-        userId, label,
+        userId, label, binanceUid: fingerprint,
         apiKeyCipher: k.cipher, apiKeyIv: k.iv, apiKeyTag: k.tag,
         secretCipher: s.cipher, secretIv: s.iv, secretTag: s.tag,
         status: 'VALID', canTrade: perms.canTrade, canWithdraw: perms.canWithdraw,
         lastValidatedAt: new Date(),
       },
       update: {
+        binanceUid: fingerprint,
         apiKeyCipher: k.cipher, apiKeyIv: k.iv, apiKeyTag: k.tag,
         secretCipher: s.cipher, secretIv: s.iv, secretTag: s.tag,
         status: 'VALID', canTrade: perms.canTrade, canWithdraw: perms.canWithdraw,
@@ -87,5 +102,27 @@ export const apiKeyService = {
     await prisma.apiKey.update({ where: { id }, data: { status: 'REVOKED' } });
     await prisma.botConfig.updateMany({ where: { userId }, data: { status: 'STOPPED', pausedReason: 'API key revoked' } });
     await prisma.auditLog.create({ data: { userId, action: 'API_KEY_REVOKED', metadata: { id } } });
+  },
+
+  /**
+   * One-time backfill: stamp the dedup fingerprint (sha256 of the stored key) onto
+   * any rows connected BEFORE one-account-one-user enforcement, so the clash check
+   * in upsert() can see them. Best-effort + idempotent — only touches null rows.
+   */
+  async backfillKeyFingerprints(): Promise<void> {
+    const rows = await prisma.apiKey.findMany({
+      where: { binanceUid: null },
+      select: { id: true, apiKeyCipher: true, apiKeyIv: true, apiKeyTag: true },
+    });
+    if (!rows.length) return;
+    let stamped = 0;
+    for (const r of rows) {
+      try {
+        const apiKey = decryptSecret({ cipher: r.apiKeyCipher, iv: r.apiKeyIv, tag: r.apiKeyTag });
+        await prisma.apiKey.update({ where: { id: r.id }, data: { binanceUid: sha256(apiKey) } });
+        stamped++;
+      } catch { /* skip a row we can't decrypt (e.g. rotated enc key) */ }
+    }
+    logger.info({ scanned: rows.length, stamped }, 'api-key dedup fingerprints backfilled');
   },
 };

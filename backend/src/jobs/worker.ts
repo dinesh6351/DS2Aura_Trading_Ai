@@ -1,6 +1,7 @@
 import { logger } from '../lib/logger.js';
 import { botManager, resetDailyCounters } from '../modules/bot/manager.js';
 import { billingService } from '../modules/fees/billing.service.js';
+import { apiKeyService } from '../modules/apikeys/apikeys.service.js';
 import { prisma } from '../lib/prisma.js';
 
 /**
@@ -15,6 +16,10 @@ import { prisma } from '../lib/prisma.js';
  */
 export function startWorkers() {
   botManager.start();
+
+  // One-off: fingerprint any API keys connected before one-account-one-user
+  // enforcement, so duplicates are detectable. Fire-and-forget, idempotent.
+  void apiKeyService.backfillKeyFingerprints().catch((e) => logger.error({ e }, 'api-key fingerprint backfill failed'));
 
   // lightweight midnight scheduler (checks each minute; fine at this scale)
   let lastDay = new Date().getUTCDate();
