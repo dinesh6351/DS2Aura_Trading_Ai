@@ -141,20 +141,21 @@ export const MODE_PRESETS: Record<TradingMode, {
   maxConsecutiveLosses: number;
   lossCooldownMin: number;
 }> = {
-  // NB: thresholds are calibrated for the ~50-condition confluence engine — a
-  // normalised score where ~70% agreement across many pro indicators is already
-  // a strong, selective setup. (The old 80-88 values were for the 19-condition
-  // model and would almost never fire against 50 conditions.)
+  // NB: thresholds are calibrated for the 24-condition trend-pullback engine — a
+  // normalised score (earned/available × 100) where ~80% agreement across a
+  // small, category-diverse confluence set is a strong, selective setup. (The
+  // 76/70/64 values belonged to the ~50-condition expansion, which scored high
+  // only at exhaustion tops and was reverted.)
   [TradingMode.CONSERVATIVE]: {
-    scoreThreshold: 76, leverage: 5, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
+    scoreThreshold: 88, leverage: 5, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
     maxConcurrentPositions: 1, maxTradesPerDay: 4, maxConsecutiveLosses: 3, lossCooldownMin: 45,
   },
   [TradingMode.BALANCED]: {
-    scoreThreshold: 70, leverage: 10, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
+    scoreThreshold: 85, leverage: 10, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
     maxConcurrentPositions: 3, maxTradesPerDay: 6, maxConsecutiveLosses: 3, lossCooldownMin: 30,
   },
   [TradingMode.AGGRESSIVE]: {
-    scoreThreshold: 64, leverage: 15, marginPerTradeUsd: 5, slPercent: 1.2, tpRR: 5,
+    scoreThreshold: 80, leverage: 15, marginPerTradeUsd: 5, slPercent: 1.2, tpRR: 5,
     maxConcurrentPositions: 5, maxTradesPerDay: 12, maxConsecutiveLosses: 3, lossCooldownMin: 15,
   },
 };
