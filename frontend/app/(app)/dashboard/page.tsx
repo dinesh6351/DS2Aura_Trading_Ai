@@ -302,6 +302,11 @@ export default function Dashboard() {
           <DynamicProtection positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} armPct={num(bot?.trailArmPct) || 0.5} gapPct={num(bot?.trailGapPct) || 0.5} />
         </section>
 
+        {/* AI profit potential — which coin is in a trade + its profit possibility (live) */}
+        <section>
+          <AiProfitPotential positions={positions} signals={signals} slPercent={bot ? num(bot.slPercent) : 1} tpRR={bot ? num(bot.tpRR) : 3} />
+        </section>
+
         {/* Live Signals — full table */}
         <section className="card overflow-x-auto">
           <div className="flex items-center justify-between mb-2">
@@ -982,6 +987,83 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 🤖 AI Profit Potential — for each coin CURRENTLY in a trade, the AI's live read of
+ * how much profit % is still on the table to its target and the confidence (live
+ * multi-indicator agreement score) that the move completes — plus the top candidate
+ * coins the bot would target next. Same deterministic rule-based engine as the live
+ * signals (free market data, not a paid feed) — an estimate, not a guarantee.
+ */
+function AiProfitPotential({ positions, signals, slPercent, tpRR }: { positions: Position[]; signals: SignalRow[]; slPercent: number; tpRR: number }) {
+  const held = new Set(positions.map((p) => p.symbol));
+  const prices = useLivePrices(positions.map((p) => p.symbol));
+  const candidates = [...signals].filter((s) => !held.has(s.symbol) && s.bias !== 'none')
+    .sort((a, b) => b.score - a.score).slice(0, 3);
+  const probCls = (p: number) => p >= 75 ? 'badge-up' : p >= 55 ? 'text-warn' : 'text-muted';
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <p className="label">🤖 AI Profit Potential — current trades</p>
+        <span className="text-xs badge-up animate-pulse">● LIVE · 1s</span>
+      </div>
+      <p className="text-[11px] text-muted mb-2">Per coin in a trade: remaining upside to its AI target and the confidence the move completes (live multi-indicator agreement). An estimate from free market signals — not a guarantee.</p>
+
+      {positions.length === 0 ? (
+        <Empty>No open trades right now — the top candidates the AI would target are below 👇</Empty>
+      ) : (
+        <div className="space-y-3">
+          {positions.map((p) => {
+            const long = p.side === 'LONG';
+            const entry = num(p.entryPrice);
+            const mark = prices[p.symbol] ?? num(p.markPrice);
+            const tp = p.takeProfit != null ? num(p.takeProfit) : null;
+            const captured = entry > 0 ? (long ? (mark - entry) / entry : (entry - mark) / entry) * 100 : 0;
+            const upside = tp != null && mark > 0 ? Math.max(0, (long ? (tp - mark) / mark : (mark - tp) / mark) * 100) : null;
+            const totalTarget = tp != null && entry > 0 ? (long ? (tp - entry) / entry : (entry - tp) / entry) * 100 : null;
+            const live = signals.find((s) => s.symbol === p.symbol);
+            const prob = live?.score ?? p.entryScore ?? null; // live AI confidence (multi-indicator agreement)
+            const trendTxt = prob != null && p.entryScore != null
+              ? (prob > p.entryScore ? '↑ strengthening' : prob < p.entryScore ? '↓ weakening' : '→ steady') : undefined;
+            const prog = totalTarget && totalTarget > 0 ? Math.max(0, Math.min(100, (captured / totalTarget) * 100)) : 0;
+            return (
+              <div key={p.id} className="border-t border-border/70 pt-2">
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="flex items-center gap-2 font-medium">{p.symbol} <span className={long ? 'badge-up' : 'badge-down'}>{p.side}</span></span>
+                  <span className="text-xs">AI confidence <b className={probCls(prob ?? 0)}>{prob ?? '—'}%</b></span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <MiniStat label="Upside to target" value={upside != null ? `+${upside.toFixed(2)}%` : '—'} sub={totalTarget != null ? `full +${totalTarget.toFixed(1)}%` : undefined} />
+                  <MiniStat label="Captured" value={`${captured >= 0 ? '+' : ''}${captured.toFixed(2)}%`} signed />
+                  <MiniStat label="Move likelihood" value={prob != null ? `${prob}%` : '—'} sub={trendTxt} />
+                </div>
+                <div className="h-1.5 bg-bg rounded overflow-hidden border border-border mt-1"><div className="h-full bg-accent" style={{ width: `${prog}%` }} /></div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {candidates.length > 0 && (
+        <div className="border-t border-border/70 mt-3 pt-2">
+          <p className="text-xs text-muted mb-1">🔮 Next candidates the AI would target (profit potential if entered):</p>
+          <div className="space-y-1">
+            {candidates.map((c) => (
+              <div key={c.symbol} className="flex items-center justify-between text-xs border-t border-border/60 py-1">
+                <span className="flex items-center gap-2">{c.symbol}
+                  <span className={c.bias === 'long' ? 'badge-up text-xs' : 'badge-down text-xs'}>{c.bias}</span>
+                  {c.allPass && <span className="badge-up text-xs animate-pulse">✅ READY</span>}
+                </span>
+                <span className="text-muted">potential <b className="text-accent">+{(slPercent * tpRR).toFixed(1)}%</b> · confidence <b className={probCls(c.score)}>{c.score}%</b></span>
+              </div>
+            ))}
           </div>
         </div>
       )}
