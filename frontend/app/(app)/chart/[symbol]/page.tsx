@@ -58,7 +58,11 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
       // @ts-expect-error injected global
       new window.TradingView.widget({
         container_id: 'tv_chart', symbol: `BINANCE:${symbol}`, interval: '15',
-        theme: 'dark', style: '1', autosize: true, studies: ['STD;EMA', 'STD;RSI', 'STD;MACD'],
+        theme: 'dark', style: '1', autosize: true, timezone: 'Etc/UTC',
+        studies: ['STD;EMA', 'STD;RSI', 'STD;MACD'],
+        hide_side_toolbar: false,  // ← drawing tools (trend line, fib, brush, …)
+        hide_top_toolbar: false,   // ← Undo / Redo + timeframe controls
+        withdateranges: true, allow_symbol_change: false, save_image: true,
       });
     };
     tvRef.current.id = 'tv_chart';
@@ -96,7 +100,10 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
         {/* My Conditions — user-defined live checks (add / undo / clear), above the chart */}
         <CustomConditions snap={snap ?? null} sig={sig ?? null} symbol={symbol} />
 
-        <div ref={tvRef} className="h-[340px] sm:h-[420px] md:h-[460px] card p-0 overflow-hidden" />
+        <div ref={tvRef} className="h-[420px] sm:h-[500px] md:h-[560px] card p-0 overflow-hidden" />
+        <p className="text-muted text-xs -mt-2">
+          ✏️ Draw with the <b>left toolbar</b> (trend line, fib, brush…). <b>↩ Undo</b>: the curved arrow in the top toolbar (or <kbd className="px-1 border border-green-900/40 rounded">Ctrl</kbd>+<kbd className="px-1 border border-green-900/40 rounded">Z</kbd>). <b>🗑 Clear</b>: the trash / “Remove drawings” tool at the bottom of the left toolbar.
+        </p>
 
         {/* Trade Plan | AI Trade Plan | Snapshot */}
         <section className="grid md:grid-cols-3 gap-4 md:gap-6">
