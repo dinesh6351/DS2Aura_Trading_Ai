@@ -939,7 +939,9 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
             const peakFrac = Math.max(peaksRef.current[p.id] ?? 0, frac, stopLockFrac ?? 0);
             peaksRef.current[p.id] = peakFrac;
             const peakProg = Math.max(0, Math.min(100, (peakFrac / PROFIT_TAKE_CAP) * 100));
-            const showPeak = peakFrac > frac + 1e-6 && peakFrac > 0; // only once profit retraced from a higher point
+            // Only while the trade is in PROFIT and has retraced from a higher point.
+            // When negative, the bar stays exactly the default (no peak marker).
+            const showPeak = frac >= 0 && peakFrac > frac + 1e-6;
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
               <div key={p.id}>
@@ -951,8 +953,10 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
                   </span>
                 </div>
                 <div className="relative h-2 bg-bg rounded overflow-hidden border border-border my-1">
-                  {showPeak && <div className="absolute inset-y-0 left-0 bg-accent/25" style={{ width: `${peakProg}%` }} title="Max reached" />}
-                  <div className={`absolute inset-y-0 left-0 ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
+                  {/* current profit fill — same color as before */}
+                  <div className={`h-full ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
+                  {/* peak high-water mark — a thin light marker line (not a dark fill) */}
+                  {showPeak && <span className="absolute inset-y-0 w-0.5 bg-accent" style={{ left: `calc(${peakProg}% - 1px)` }} title="Max profit reached" />}
                 </div>
                 <div className="flex justify-between text-xs text-muted">
                   <span>stop: <b className={lock != null ? 'text-accent' : 'text-warn'}>{stopLabel}</b></span>
