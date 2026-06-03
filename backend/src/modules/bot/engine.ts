@@ -9,11 +9,9 @@ import { apiKeyService } from '../apikeys/apikeys.service.js';
 import { billingService } from '../fees/billing.service.js';
 import { realtime } from '../notifications/realtime.js';
 import { sendUserTelegram } from '../notifications/telegram.service.js';
-import {
-  calcEMA, calcVWAP, calcRSI, calcMACD, calcATR, calcADX, avgVolume, emaSlope,
-  detectCandlePattern, findSwingLevels, detectMarketStructure, computeBiasOnTf,
-} from './indicators.js';
+import { calcEMA, calcVWAP, calcRSI, computeBiasOnTf } from './indicators.js';
 import { runSafetyCheck, type StrategyCtx } from './strategy.js';
+import { buildCandleCtx } from './strategy-context.js';
 import { effectiveThreshold, bustLearningCache } from './learning.service.js';
 
 const TIMEFRAME = '1m';
@@ -195,23 +193,12 @@ async function evaluateSymbol(symbol: string, cfg: BotConfig, market: MarketStat
   const baseDir = price > vwap && price > ema8 ? 'long' : price < vwap && price < ema8 ? 'short' : 'none';
   const agree = tfBiases.filter((b) => b === baseDir).length;
 
-  const atr = calcATR(candles, 14);
   const funding = await BinanceClient.funding(symbol).catch(() => 0);
 
   const ctx: StrategyCtx = {
-    ema20: calcEMA(closes, 20),
-    ema50: calcEMA(closes, 50),
-    ema200: closes.length >= 200 ? calcEMA(closes, 200) : undefined,
-    ema50Slope: emaSlope(closes, 50),
-    atrPct: atr / price,
-    volRatio: candles[candles.length - 1]!.volume / (avgVolume(candles, 20) || 1),
-    macd: calcMACD(closes),
-    adx: calcADX(candles, 14),
-    pattern: detectCandlePattern(candles),
-    swingLevels: findSwingLevels(candles, 50),
+    ...buildCandleCtx(candles), // full professional indicator suite (~50 conditions)
     funding,
     multiTfAgree: { dir: baseDir as 'long' | 'short' | 'none', passed: agree, total: MULTI_TFS.length },
-    marketStructure: detectMarketStructure(candles),
     // shared market context → drives the critical gates
     btcTrend: symbol === 'BTCUSDT' ? undefined : market.btcTrend,
     marketVerdict: market.verdict,

@@ -6,6 +6,7 @@ import {
   detectCandlePattern, findSwingLevels, detectMarketStructure, computeBiasOnTf,
 } from './indicators.js';
 import { runSafetyCheck, type StrategyCtx } from './strategy.js';
+import { buildCandleCtx } from './strategy-context.js';
 import { effectiveThreshold } from './learning.service.js';
 
 /**
@@ -205,18 +206,11 @@ export async function signalBreakdown(symbol: string, cfg: BotConfig | null, mar
   }));
   const baseDir = price > vwap && price > ema8 ? 'long' : price < vwap && price < ema8 ? 'short' : 'none';
   const agree = tfBiases.filter((b) => b === baseDir).length;
-  const atr = calcATR(candles, 14);
   const funding = await BinanceClient.funding(symbol).catch(() => 0);
 
   const ctx: StrategyCtx = {
-    ema20: calcEMA(closes, 20), ema50: calcEMA(closes, 50),
-    ema200: closes.length >= 200 ? calcEMA(closes, 200) : undefined,
-    ema50Slope: emaSlope(closes, 50), atrPct: atr / price,
-    volRatio: candles[candles.length - 1]!.volume / (avgVolume(candles, 20) || 1),
-    macd: calcMACD(closes), adx: calcADX(candles, 14),
-    pattern: detectCandlePattern(candles), swingLevels: findSwingLevels(candles, 50),
+    ...buildCandleCtx(candles), // SAME professional suite the live engine scores
     funding, multiTfAgree: { dir: baseDir as 'long' | 'short' | 'none', passed: agree, total: 3 },
-    marketStructure: detectMarketStructure(candles),
     btcTrend: symbol === 'BTCUSDT' ? undefined : market.btcTrend,
     marketVerdict: market.verdict, fearGreed: { value: market.fearGreed.value },
     toggles: {
