@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
@@ -881,6 +881,11 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
     .slice(0, Math.max(0, 5 - positions.length));
   const readyCount = signals.filter((s) => !held.has(s.symbol) && s.allPass).length;
   const prices = useLivePrices([...positions.map((p) => p.symbol), ...watching.map((w) => w.symbol)]);
+  // Per-position high-water mark (max profit fraction reached). Kept in a ref so it
+  // survives the 1s re-renders and only ever ratchets UP — it shows how far a trade
+  // got even after the live profit retraces. Floored by the persisted stop's locked
+  // level so it stays sensible across a page reload.
+  const peaksRef = useRef<Record<string, number>>({});
   const chartBtn = (sym: string) => <a href={`/chart/${sym}`} className="text-accent text-xs hover:underline">📈 chart</a>;
 
   return (
@@ -924,15 +929,25 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
               : frac >= arm ? `trailing ${gapPct}% behind`
               : `arms at +${armPct}%`;
             const prog = Math.max(0, Math.min(100, (frac / PROFIT_TAKE_CAP) * 100));
+            // High-water mark: max of (live profit, prior peak, the locked-stop level the
+            // trade must have reached for the stop to ratchet there). Ratchets UP only.
+            const peakFrac = Math.max(peaksRef.current[p.id] ?? 0, frac, stopLockFrac ?? 0);
+            peaksRef.current[p.id] = peakFrac;
+            const peakProg = Math.max(0, Math.min(100, (peakFrac / PROFIT_TAKE_CAP) * 100));
+            const showPeak = peakFrac > frac + 1e-6 && peakFrac > 0; // only once profit retraced from a higher point
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
               <div key={p.id}>
                 <div className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-2">{p.symbol} <span className={long ? 'badge-up' : 'badge-down'}>{p.side}</span> {chartBtn(p.symbol)}</span>
-                  <span className={cls}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+                  <span className="flex items-center gap-1.5">
+                    {showPeak && <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-accent/20 text-accent" title="Highest profit reached">peak +{(peakFrac * 100).toFixed(2)}%</span>}
+                    <span className={cls}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+                  </span>
                 </div>
-                <div className="h-2 bg-bg rounded overflow-hidden border border-border my-1">
-                  <div className={`h-full ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
+                <div className="relative h-2 bg-bg rounded overflow-hidden border border-border my-1">
+                  {showPeak && <div className="absolute inset-y-0 left-0 bg-accent/25" style={{ width: `${peakProg}%` }} title="Max reached" />}
+                  <div className={`absolute inset-y-0 left-0 ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
                 </div>
                 <div className="flex justify-between text-xs text-muted">
                   <span>stop: <b className={lock != null ? 'text-accent' : 'text-warn'}>{stopLabel}</b></span>
