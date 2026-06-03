@@ -197,6 +197,9 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
           ) : <Empty>Computing the strategy checklist…</Empty>}
         </section>
 
+        {/* My Conditions — user-defined live checks (add / undo / clear) */}
+        <CustomConditions snap={snap ?? null} sig={sig ?? null} symbol={symbol} />
+
         {/* Key Technical Indicators | Support & Resistance */}
         <section className="grid md:grid-cols-2 gap-4 md:gap-6">
           <div className="card">
@@ -296,4 +299,116 @@ function Ind({ k, v, m }: { k: string; v: React.ReactNode; m?: boolean }) {
 }
 function Empty({ children }: { children?: React.ReactNode }) {
   return <p className="text-muted text-sm py-4 text-center">{children ?? 'Loading…'}</p>;
+}
+
+/* ── My Conditions — build your own live checks (add / undo / clear) ───────── */
+interface CustomCond { id: string; metric: string; op: string; value: number; }
+const COND_METRICS: { key: string; label: string }[] = [
+  { key: 'rsi14', label: 'RSI (14)' },
+  { key: 'rsi3', label: 'RSI (3)' },
+  { key: 'adx', label: 'ADX' },
+  { key: 'volRatio', label: 'Volume ×' },
+  { key: 'atrPct', label: 'ATR %' },
+  { key: 'macdHist', label: 'MACD hist' },
+  { key: 'distFromVwapPct', label: 'Price vs VWAP %' },
+  { key: 'price', label: 'Price' },
+  { key: 'score', label: 'Signal score' },
+];
+const COND_OPS: { v: string; label: string }[] = [
+  { v: '>', label: '>' }, { v: '<', label: '<' }, { v: '>=', label: '≥' }, { v: '<=', label: '≤' },
+];
+const COND_STORE = 'ds2_custom_conditions';
+
+function metricVal(metric: string, snap: ChartDetail['snapshot'], sig: ChartDetail['signal']): number | null {
+  if (metric === 'score') return sig?.score ?? null;
+  if (!snap) return null;
+  const v = (snap as unknown as Record<string, number>)[metric];
+  return typeof v === 'number' ? v : null;
+}
+const metricLabel = (k: string) => COND_METRICS.find((m) => m.key === k)?.label ?? k;
+const opLabel = (v: string) => COND_OPS.find((o) => o.v === v)?.label ?? v;
+function evalCond(c: CustomCond, snap: ChartDetail['snapshot'], sig: ChartDetail['signal']): boolean | null {
+  const v = metricVal(c.metric, snap, sig);
+  if (v == null) return null;
+  if (c.op === '>') return v > c.value;
+  if (c.op === '<') return v < c.value;
+  if (c.op === '>=') return v >= c.value;
+  if (c.op === '<=') return v <= c.value;
+  return null;
+}
+
+function CustomConditions({ snap, sig, symbol }: { snap: ChartDetail['snapshot']; sig: ChartDetail['signal']; symbol: string }) {
+  const [conds, setConds] = useState<CustomCond[]>([]);
+  const [metric, setMetric] = useState('rsi14');
+  const [op, setOp] = useState('>');
+  const [value, setValue] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try { const raw = localStorage.getItem(COND_STORE); if (raw) setConds(JSON.parse(raw)); } catch { /* ignore */ }
+    setLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    try { localStorage.setItem(COND_STORE, JSON.stringify(conds)); } catch { /* ignore */ }
+  }, [conds, loaded]);
+
+  function add() {
+    const num = Number(value);
+    if (value.trim() === '' || Number.isNaN(num)) return;
+    setConds((c) => [...c, { id: Math.random().toString(36).slice(2), metric, op, value: num }]);
+    setValue('');
+  }
+  const undo = () => setConds((c) => c.slice(0, -1));
+  const clear = () => setConds([]);
+  const remove = (id: string) => setConds((c) => c.filter((x) => x.id !== id));
+  const passed = conds.filter((c) => evalCond(c, snap, sig) === true).length;
+
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <p className="label">🧩 My Conditions <span className="text-muted text-xs font-normal">· your own live checks on {symbol}</span></p>
+        <div className="flex items-center gap-2">
+          {conds.length > 0 && <span className="text-sm text-muted mr-1">{passed}/{conds.length} pass</span>}
+          <button onClick={undo} disabled={!conds.length} className="btn text-xs disabled:opacity-40">↩ Undo</button>
+          <button onClick={clear} disabled={!conds.length} className="btn-danger text-xs disabled:opacity-40">🗑 Clear</button>
+        </div>
+      </div>
+
+      {/* builder row */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <select value={metric} onChange={(e) => setMetric(e.target.value)} className="bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm">
+          {COND_METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+        </select>
+        <select value={op} onChange={(e) => setOp(e.target.value)} className="bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm">
+          {COND_OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+        </select>
+        <input type="number" step="any" value={value} placeholder="value" onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+          className="w-24 bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm" />
+        <button onClick={add} className="btn text-sm">+ Add condition</button>
+      </div>
+
+      {/* list */}
+      {conds.length ? (
+        <div className="grid sm:grid-cols-2 gap-x-6 text-sm">
+          {conds.map((c) => {
+            const res = evalCond(c, snap, sig);
+            const cur = metricVal(c.metric, snap, sig);
+            return (
+              <div key={c.id} className="flex items-center justify-between border-t border-green-900/20 py-1">
+                <span>{res == null ? '⚪' : res ? '✅' : '🚫'} {metricLabel(c.metric)} {opLabel(c.op)} {c.value}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-muted text-xs">now {cur == null ? '—' : +cur.toFixed(4)}</span>
+                  <button onClick={() => remove(c.id)} className="text-danger text-xs hover:opacity-80" title="Remove">✕</button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-muted text-sm py-1">No custom conditions yet. Build one above (e.g. <span className="text-green-100">RSI (14) &gt; 55</span>) and press <b>+ Add condition</b>. They evaluate live against the coin you&apos;re viewing and are saved on this device.</p>
+      )}
+    </section>
+  );
 }
