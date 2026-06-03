@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api, getApiBase } from '@/lib/api';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface Overview {
   totalUsers: number; activeUsers: number; inactiveUsers: number; connectedAccounts: number;
@@ -93,10 +94,11 @@ export default function AdminPage() {
   return (
     <main className="p-3 sm:p-4 md:p-6 space-y-5 md:space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h1 className="text-accent text-xl font-bold">▚ Admin CRM</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Admin CRM</h1>
         <div className="flex items-center gap-2">
-          <a href="/dashboard" className="btn text-sm">← Dashboard</a>
-          <a href="/settings" className="btn text-sm">Profile</a>
+          <ThemeToggle />
+          <a href="/dashboard" className="btn-outline text-sm">← Dashboard</a>
+          <a href="/settings" className="btn-outline text-sm">Profile</a>
         </div>
       </div>
       {ov?.binanceBanActive && <p className="text-danger">⚠ Binance rate-limit ban active on worker IP</p>}
@@ -133,14 +135,14 @@ export default function AdminPage() {
           </div>
           <div className="text-sm">
             <span className="label">Subscriptions:</span>{' '}
-            {Object.entries(report.subscriptionsByStatus).map(([k, v]) => <span key={k} className="mr-3 text-green-100">{k}: {v}</span>)}
+            {Object.entries(report.subscriptionsByStatus).map(([k, v]) => <span key={k} className="mr-3 text-fg">{k}: {v}</span>)}
           </div>
           <div>
             <p className="label mb-1">Recent feedback</p>
             {report.feedback.length === 0 ? <p className="text-muted text-sm">No feedback yet.</p> : (
               <div className="space-y-1 max-h-48 overflow-auto">
                 {report.feedback.map((f, i) => (
-                  <div key={i} className="text-sm border-t border-green-900/20 py-1">
+                  <div key={i} className="text-sm border-t border-border/70 py-1">
                     <span className="text-accent">{f.name ?? 'Anon'}</span> <span className="text-muted">({f.email ?? '—'})</span>: {f.message ?? ''}
                   </div>
                 ))}
@@ -159,8 +161,8 @@ export default function AdminPage() {
             {brandSaved && <span className="text-accent text-sm">✅ Saved</span>}
           </div>
           {/* Logo upload + preview */}
-          <div className="flex items-center gap-4 p-3 rounded border border-green-900/30 bg-bg">
-            <div className="h-14 w-14 rounded bg-panel border border-green-900/40 grid place-items-center overflow-hidden">
+          <div className="flex items-center gap-4 p-3 rounded border border-border bg-bg">
+            <div className="h-14 w-14 rounded bg-panel border border-border grid place-items-center overflow-hidden">
               {brand.logoUrl ? <img src={brand.logoUrl} alt="logo" className="h-full w-full object-contain" /> : <span className="text-muted text-xs">no logo</span>}
             </div>
             <div className="flex-1">
@@ -191,7 +193,7 @@ export default function AdminPage() {
 
       <div className="card overflow-x-auto">
         <div className="flex gap-2 mb-3">
-          <input className="bg-bg border border-green-900/40 rounded px-3 py-2 flex-1 min-w-0"
+          <input className="input flex-1 min-w-0"
             placeholder="search email" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button className="btn" onClick={load}>Search</button>
         </div>
@@ -200,7 +202,7 @@ export default function AdminPage() {
             <th>Email</th><th>Status</th><th>Bot</th><th>Plan</th><th>Sub</th><th>Profit</th><th>Mo. Trades</th><th>Actions</th>
           </tr></thead>
           <tbody>{users.map((u) => (
-            <tr key={u.id} className="border-t border-green-900/30">
+            <tr key={u.id} className="border-t border-border">
               <td>{u.email}</td><td>{u.status}</td><td>{u.botStatus}</td><td>{u.plan}</td>
               <td>{u.subStatus}</td>
               <td className={u.lifetimeProfit >= 0 ? 'badge-up' : 'badge-down'}>${u.lifetimeProfit.toFixed(2)}</td>
@@ -233,9 +235,9 @@ function Stat({ label, v, money }: { label: string; v?: number; money?: boolean 
 }
 function Mini({ label, v }: { label: string; v: number | string }) {
   return (
-    <div className="bg-bg rounded p-2 border border-green-900/30">
+    <div className="bg-bg rounded p-2 border border-border">
       <p className="label">{label}</p>
-      <p className="text-green-100 font-bold">{v}</p>
+      <p className="text-fg font-bold">{v}</p>
     </div>
   );
 }
@@ -243,7 +245,7 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   return (
     <label className="block">
       <span className="label">{label}</span>
-      <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 mt-1" value={value} onChange={onChange} />
+      <input className="input mt-1" value={value} onChange={onChange} />
     </label>
   );
 }
@@ -290,7 +292,7 @@ function CouponsAdmin({ users, onNote }: { users: AdminUser[]; onNote: (msg: str
     } catch (e) { onNote(`❌ ${(e as Error).message}`); } finally { setBusy(false); }
   }
 
-  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const inp = 'input';
   return (
     <div className="card space-y-4">
       <p className="label">🎟️ Coupons — discount codes &amp; grants</p>
@@ -306,7 +308,7 @@ function CouponsAdmin({ users, onNote }: { users: AdminUser[]; onNote: (msg: str
       <p className="text-muted text-xs">Leave the code blank for an admin-only grant (apply it directly to a user below). 100% = free. One-time — applies to the user’s next invoice.</p>
 
       {/* Apply to a user */}
-      <div className="grid sm:grid-cols-3 gap-2 items-end border-t border-green-900/20 pt-3">
+      <div className="grid sm:grid-cols-3 gap-2 items-end border-t border-border/70 pt-3">
         <label className="block"><span className="label">Coupon</span>
           <select className={inp} value={applyCoupon} onChange={(e) => setApplyCoupon(e.target.value)}>
             <option value="">Select coupon…</option>
@@ -327,7 +329,7 @@ function CouponsAdmin({ users, onNote }: { users: AdminUser[]; onNote: (msg: str
         <table className="w-full text-sm">
           <thead><tr className="text-muted text-left"><th>Code</th><th>%</th><th>Used</th><th>Limit</th><th>Note</th><th>Status</th><th></th></tr></thead>
           <tbody>{coupons.map((c) => (
-            <tr key={c.id} className="border-t border-green-900/30">
+            <tr key={c.id} className="border-t border-border">
               <td className="font-mono">{c.code ?? <span className="text-muted">— grant —</span>}</td>
               <td>{c.discountPercent}%</td>
               <td>{c.timesRedeemed}</td>

@@ -7,6 +7,10 @@ import {
 import { api, openRealtime, getApiBase } from '@/lib/api';
 import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE, regionLabel } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
+import { useTheme, themeColors } from '@/lib/theme';
+
+/** recharts tooltip styling that follows the active theme. */
+const tip = (c: ReturnType<typeof themeColors>) => ({ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8, fontSize: 12, color: c.fg });
 
 interface Account { totalBalance: number; availableBalance: number; marginUsed: number; unrealizedPnl: number; openPositions: number; lastSyncedAt: string | null; live?: boolean; }
 interface Stats { winRate: number; realizedPnl: number; todayProfit: number; weeklyProfit: number; monthlyProfit: number; roi: number; totalTrades: number; timezone?: string; lastResetAt?: string | null; }
@@ -159,6 +163,8 @@ export default function Dashboard() {
 
   // ── Derived analytics (all client-side from data we already have) ───────────
   const d = useMemo(() => deriveAnalytics(trades, signals, perf, bot, market, account, stats), [trades, signals, perf, bot, market, account, stats]);
+  const [theme] = useTheme();
+  const tc = themeColors(theme);
 
   return (
     <>
@@ -167,7 +173,7 @@ export default function Dashboard() {
         {/* Header + bot controls */}
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-accent text-xl font-bold">▚ Trading Terminal</h1>
+            <h1 className="text-xl font-semibold tracking-tight">Trading Terminal</h1>
             {market && <span className="text-muted text-sm">BTC <b className={trendColor(market.btcTrend)}>{market.btcTrend}</b>{market.btcPrice ? ` $${market.btcPrice.toLocaleString()}` : ''}</span>}
             <span className="text-xs flex items-center gap-1">
               <span className={account?.live ? 'badge-up animate-pulse' : 'text-warn'}>{account?.live ? '● LIVE' : '○ cached'}</span>
@@ -274,7 +280,7 @@ export default function Dashboard() {
                   const arrow = ls != null && entry != null ? (ls > entry ? '↑' : ls < entry ? '↓' : '→') : '';
                   const lsCls = ls == null ? 'text-muted' : ls >= (live?.threshold ?? 80) ? 'badge-up' : entry != null && ls < entry ? 'badge-down' : 'text-warn';
                   return (
-                    <div key={p.id} className="border-t border-green-900/30 pt-2">
+                    <div key={p.id} className="border-t border-border pt-2">
                       <p className="font-bold">{p.symbol} <span className={p.side === 'LONG' ? 'badge-up' : 'badge-down'}>{p.side}</span></p>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-xs text-muted mt-1">
                         <span>SL: <b className="text-danger">{p.stopLoss ? num(p.stopLoss).toFixed(4) : '—'}</b></span>
@@ -312,7 +318,7 @@ export default function Dashboard() {
                 <th className="text-left pl-3">What&apos;s blocking</th><th></th>
               </tr></thead>
               <tbody>{signals.map((s) => (
-                <tr key={s.symbol} className={`border-t border-green-900/30 ${s.allPass ? 'bg-accent/10' : ''}`}>
+                <tr key={s.symbol} className={`border-t border-border ${s.allPass ? 'bg-accent/10' : ''}`}>
                   <td className="font-bold">{s.symbol}</td>
                   <td className="text-center"><span className={s.bias === 'long' ? 'badge-up' : s.bias === 'short' ? 'badge-down' : 'text-muted'}>{s.bias}</span></td>
                   <td className="text-center"><b className={s.score >= s.threshold ? 'text-accent' : ''}>{s.score}</b></td>
@@ -387,9 +393,9 @@ export default function Dashboard() {
             {d.equity.length === 0 ? <Empty>No closed trades yet</Empty> : (
               <ResponsiveContainer width="100%" height={140}>
                 <LineChart data={d.equity}>
-                  <CartesianGrid stroke="#14321420" /><XAxis dataKey="t" hide /><YAxis hide domain={['auto', 'auto']} />
-                  <Tooltip contentStyle={{ background: '#0f160f', border: '1px solid #14321a', fontSize: 12 }} />
-                  <Line type="monotone" dataKey="pnl" stroke="#22c55e" strokeWidth={2} dot={false} />
+                  <CartesianGrid stroke={tc.border} /><XAxis dataKey="t" hide /><YAxis hide domain={['auto', 'auto']} />
+                  <Tooltip contentStyle={tip(tc)} />
+                  <Line type="monotone" dataKey="pnl" stroke={tc.accent} strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -405,10 +411,10 @@ export default function Dashboard() {
             </div>
             <ResponsiveContainer width="100%" height={120}>
               <AreaChart data={d.drawdown}>
-                <defs><linearGradient id="dd" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.5} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid stroke="#14321420" /><XAxis dataKey="t" hide /><YAxis hide domain={['auto', 0]} />
-                <Tooltip contentStyle={{ background: '#0f160f', border: '1px solid #14321a', fontSize: 12 }} />
-                <Area type="monotone" dataKey="dd" stroke="#ef4444" strokeWidth={1.5} fill="url(#dd)" />
+                <defs><linearGradient id="dd" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={tc.danger} stopOpacity={0.5} /><stop offset="100%" stopColor={tc.danger} stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid stroke={tc.border} /><XAxis dataKey="t" hide /><YAxis hide domain={['auto', 0]} />
+                <Tooltip contentStyle={tip(tc)} />
+                <Area type="monotone" dataKey="dd" stroke={tc.danger} strokeWidth={1.5} fill="url(#dd)" />
               </AreaChart>
             </ResponsiveContainer>
           </section>
@@ -425,7 +431,7 @@ export default function Dashboard() {
             <MiniStat label="Losses Today" value={`${d.todayLosses}`} sub={`${d.blocked} blocked now`} />
             <MiniStat label="Bot Status" value={bot?.status ?? '—'} sub={bot?.mode ?? ''} />
           </div>
-          <p className="text-sm text-muted leading-relaxed border-t border-green-900/20 pt-3">{d.dailyNarrative}</p>
+          <p className="text-sm text-muted leading-relaxed border-t border-border/70 pt-3">{d.dailyNarrative}</p>
         </section>
 
         {/* Why the bot trades / held back */}
@@ -474,7 +480,7 @@ export default function Dashboard() {
                   const fee = num(t.realFee) !== 0 ? num(t.realFee) : -(num(t.entryPrice) + num(t.exitPrice)) * num(t.quantity) * TAKER_FEE_RATE;
                   const actual = num(t.netPnl) + fee + num(t.funding);
                   return (
-                  <tr key={t.id} className="border-t border-green-900/30">
+                  <tr key={t.id} className="border-t border-border">
                     <td className="text-xs text-muted">{new Date(t.closedAt).toLocaleString()}</td>
                     <td>{t.symbol}</td><td className="text-center"><span className={t.side === 'LONG' ? 'badge-up' : 'badge-down'}>{t.side}</span></td>
                     <td className="text-center text-xs">{num(t.quantity)}</td>
@@ -491,7 +497,7 @@ export default function Dashboard() {
               <table className="w-full text-sm">
                 <thead><tr className="text-muted text-xs"><th className="text-left">Symbol</th><th>Net P&L</th><th>Trades</th><th>W</th><th>L</th><th>Last</th></tr></thead>
                 <tbody>{d.perSymbol7d.map((c) => (
-                  <tr key={c.symbol} className="border-t border-green-900/30 cursor-pointer hover:bg-accent/5" onClick={() => openDetail(c.symbol)}>
+                  <tr key={c.symbol} className="border-t border-border cursor-pointer hover:bg-accent/5" onClick={() => openDetail(c.symbol)}>
                     <td className="text-accent whitespace-nowrap">{c.symbol} <a href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</a></td>
                     <td className={`text-center ${c.netPnl >= 0 ? 'badge-up' : 'badge-down'}`}>{c.netPnl >= 0 ? '+' : ''}{c.netPnl.toFixed(2)}</td>
                     <td className="text-center">{c.trades}</td><td className="text-center badge-up">{c.wins}</td><td className="text-center badge-down">{c.trades - c.wins}</td>
@@ -511,7 +517,7 @@ export default function Dashboard() {
               <table className="w-full text-sm min-w-[760px]">
                 <thead><tr className="text-muted text-xs"><th className="text-left">Coin</th><th>Trades</th><th>W/L</th><th>Win%</th><th>P&L</th><th>Risk</th><th>Sentiment</th><th className="text-left pl-3">AI analysis</th></tr></thead>
                 <tbody>{d.analysis.map((c) => (
-                  <tr key={c.symbol} className="border-t border-green-900/30 cursor-pointer hover:bg-accent/5 align-top" onClick={() => openDetail(c.symbol)}>
+                  <tr key={c.symbol} className="border-t border-border cursor-pointer hover:bg-accent/5 align-top" onClick={() => openDetail(c.symbol)}>
                     <td className="text-accent font-bold whitespace-nowrap">{c.symbol} <a href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</a></td>
                     <td className="text-center">{c.trades}</td>
                     <td className="text-center text-xs">{c.wins}/{c.trades - c.wins}</td>
@@ -543,7 +549,7 @@ export default function Dashboard() {
           {log.length === 0 ? <Empty>No activity yet</Empty> : (
             <div className="space-y-1 max-h-72 overflow-auto text-sm">
               {log.map((l) => (
-                <div key={l.id} className="border-t border-green-900/20 py-1">
+                <div key={l.id} className="border-t border-border/70 py-1">
                   <span className="text-accent">{l.title}</span> <span className="text-muted text-xs">· {new Date(l.createdAt).toLocaleTimeString()}</span>
                   <p className="text-muted text-xs">{l.body}</p>
                 </div>
@@ -724,14 +730,14 @@ function coinAnalysis(c: Perf): string {
  */
 function ModeToggle({ paper, onSet }: { paper?: boolean; onSet: (paper: boolean) => void }) {
   return (
-    <span className="inline-flex items-center rounded border border-green-900/40 overflow-hidden text-xs"
+    <span className="inline-flex items-center rounded border border-border overflow-hidden text-xs"
       title="Switch between Paper (simulated) and Live (real-money) trading. Close open positions first.">
       <button type="button" onClick={() => onSet(true)}
-        className={`px-2 py-1 font-bold transition ${paper ? 'bg-warn/30 text-warn' : 'text-muted hover:text-green-100'}`}>
+        className={`px-2 py-1 font-bold transition ${paper ? 'bg-warn/30 text-warn' : 'text-muted hover:text-fg'}`}>
         🧪 Paper
       </button>
       <button type="button" onClick={() => onSet(false)}
-        className={`px-2 py-1 font-bold transition ${paper === false ? 'bg-danger/30 text-danger' : 'text-muted hover:text-green-100'}`}>
+        className={`px-2 py-1 font-bold transition ${paper === false ? 'bg-danger/30 text-danger' : 'text-muted hover:text-fg'}`}>
         💵 Live
       </button>
     </span>
@@ -758,7 +764,7 @@ function BinancePnlPanel({ data }: { data?: BinancePnl }) {
   const Bucket = ({ b, label }: { b?: PnlBucket; label: string }) => {
     if (!b) return null;
     return (
-      <div className="bg-bg rounded p-3 border border-green-900/30">
+      <div className="bg-bg rounded p-3 border border-border">
         <p className="label mb-1">{label}</p>
         <p className={`text-xl font-bold ${b.net >= 0 ? 'badge-up' : 'badge-down'}`}>{b.net >= 0 ? '+' : ''}{b.net.toFixed(2)} USDT</p>
         <div className="grid grid-cols-2 gap-x-3 text-xs text-muted mt-1">
@@ -844,7 +850,7 @@ function LivePositions({ positions, onClosed }: { positions: Position[]; onClose
             const usd = (long ? mark - entry : entry - mark) * num(p.quantity);
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
-              <tr key={p.id} className="border-t border-green-900/30">
+              <tr key={p.id} className="border-t border-border">
                 <td>{p.symbol} <span className={long ? 'badge-up text-xs' : 'badge-down text-xs'}>{p.side}</span> <a href={`/chart/${p.symbol}`} className="text-accent text-xs hover:underline">📈</a></td>
                 <td className="text-center text-xs">{entry.toFixed(4)} → <b>{mark.toFixed(4)}</b></td>
                 <td className={`text-center ${cls}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</td>
@@ -884,12 +890,12 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
         <span className="text-xs badge-up animate-pulse">● LIVE · 1s · up to 5 coins</span>
       </div>
       <p className="text-xs text-muted mb-1">
-        Arms at <b className="text-green-100">+{armPct}%</b> profit, then trails <b className="text-green-100">{gapPct}%</b> behind — the stop only ratchets up, never back. Initial stop <b className="text-warn">−{slPercent}%</b> · closes at <b className="text-accent">+{(PROFIT_TAKE_CAP * 100).toFixed(0)}%</b>.
+        Arms at <b className="text-fg">+{armPct}%</b> profit, then trails <b className="text-fg">{gapPct}%</b> behind — the stop only ratchets up, never back. Initial stop <b className="text-warn">−{slPercent}%</b> · closes at <b className="text-accent">+{(PROFIT_TAKE_CAP * 100).toFixed(0)}%</b>.
       </p>
       <p className="text-[11px] text-muted mb-2">Tune “Arm trailing +%” and “Trail gap %” in ⚙️ Bot Settings.</p>
 
       {/* Active positions — live ladder progress */}
-      <div className="border-t border-green-900/20 mt-3 pt-2 space-y-3">
+      <div className="border-t border-border/70 mt-3 pt-2 space-y-3">
         {positions.length === 0 ? <p className="text-muted text-xs">No open positions yet — protection activates the moment a trade opens. Candidates below 👇</p> :
           positions.map((p) => {
             const long = p.side === 'LONG';
@@ -925,7 +931,7 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
                   <span className="flex items-center gap-2">{p.symbol} <span className={long ? 'badge-up' : 'badge-down'}>{p.side}</span> {chartBtn(p.symbol)}</span>
                   <span className={cls}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
                 </div>
-                <div className="h-2 bg-bg rounded overflow-hidden border border-green-900/40 my-1">
+                <div className="h-2 bg-bg rounded overflow-hidden border border-border my-1">
                   <div className={`h-full ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
                 </div>
                 <div className="flex justify-between text-xs text-muted">
@@ -939,7 +945,7 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
 
       {/* Watching — top candidate coins (live), filled to ~5 total */}
       {watching.length > 0 && (
-        <div className="border-t border-green-900/20 mt-3 pt-2">
+        <div className="border-t border-border/70 mt-3 pt-2">
           <p className="text-xs mb-1">
             <span className="text-muted">👀 Watching ({watching.length}) — top candidates, protection arms on entry · </span>
             {readyCount > 0 ? <span className="badge-up animate-pulse">{readyCount} READY to trade ✅</span> : <span className="text-muted">none ready yet</span>}
@@ -948,7 +954,7 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
             {watching.map((w) => {
               const live = prices[w.symbol];
               return (
-                <div key={w.symbol} className={`flex items-center justify-between text-sm border-t border-green-900/10 py-1 ${w.allPass ? 'bg-accent/10 rounded px-1' : ''}`}>
+                <div key={w.symbol} className={`flex items-center justify-between text-sm border-t border-border/60 py-1 ${w.allPass ? 'bg-accent/10 rounded px-1' : ''}`}>
                   <span className="flex items-center gap-2">
                     {w.symbol}
                     <span className={w.bias === 'long' ? 'badge-up text-xs' : w.bias === 'short' ? 'badge-down text-xs' : 'text-muted text-xs'}>{w.bias === 'none' ? 'neutral' : w.bias}</span>
@@ -971,6 +977,8 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
 /** AI & Strategy Intelligence: regime + active strategy, strategy performance,
  *  Fear & Greed, trade learning/feedback, and market intelligence (§17-22). */
 function IntelSection({ intel }: { intel?: Intel }) {
+  const [theme] = useTheme();
+  const tc = themeColors(theme);
   if (!intel) return <section className="card"><Empty>Loading AI &amp; strategy intelligence…</Empty></section>;
   const { strategy: st, fearGreed: fg, learning: lr, marketIntel: mi } = intel;
   const regimeCls = st.regime.includes('UP') ? 'badge-up' : st.regime.includes('DOWN') ? 'badge-down' : st.regime === 'VOLATILE' ? 'text-warn' : 'text-muted';
@@ -985,9 +993,9 @@ function IntelSection({ intel }: { intel?: Intel }) {
             <Row k="Market regime" v={<span className={regimeCls}>{st.regimeLabel}</span>} />
             <Row k="Active strategy" v={<b className="text-accent">{st.primary.name}</b>} />
             <Row k="Confidence" v={`${st.confidence}%`} />
-            <div className="h-1.5 bg-bg rounded overflow-hidden border border-green-900/40"><div className="h-full bg-accent" style={{ width: `${st.confidence}%` }} /></div>
+            <div className="h-1.5 bg-bg rounded overflow-hidden border border-border"><div className="h-full bg-accent" style={{ width: `${st.confidence}%` }} /></div>
             <p className="text-muted text-xs pt-1">{st.reason}</p>
-            <div className="border-t border-green-900/20 pt-1 mt-1">
+            <div className="border-t border-border/70 pt-1 mt-1">
               <p className="text-accent text-xs">Top winning conditions</p>
               <ul className="text-muted text-xs">{lr.topWinning.slice(0, 3).map((c, i) => <li key={i}>✅ {c}</li>)}</ul>
               <p className="text-danger text-xs mt-1">Top losing conditions</p>
@@ -1005,7 +1013,7 @@ function IntelSection({ intel }: { intel?: Intel }) {
             <Row k="Win rate" v={`${lr.winRate}%`} /><Row k="Profit factor" v={lr.profitFactor === 999 ? '∞' : lr.profitFactor} />
             <Row k="Best coin" v={lr.best[0] ? <span className="badge-up">{lr.best[0].symbol} +${lr.best[0].netPnl.toFixed(2)}</span> : '—'} />
             <Row k="Worst coin" v={lr.worst[0] && lr.worst[0].netPnl < 0 ? <span className="badge-down">{lr.worst[0].symbol} {lr.worst[0].netPnl.toFixed(2)}</span> : '—'} />
-            <div className="border-t border-green-900/20 pt-1 mt-1 text-xs">
+            <div className="border-t border-border/70 pt-1 mt-1 text-xs">
               <p className="text-muted">Exits: {Object.entries(lr.byReason).map(([r, v]) => `${r} ${v.count}`).join(' · ') || '—'}</p>
               <p className="text-accent mt-1">Avoid in this regime:</p>
               <p className="text-muted">{st.avoid.length ? st.avoid.join(', ') : 'none — all families fit'}</p>
@@ -1023,8 +1031,8 @@ function IntelSection({ intel }: { intel?: Intel }) {
           {fg.history.length > 1 && (
             <ResponsiveContainer width="100%" height={56}>
               <LineChart data={fg.history}><XAxis dataKey="date" hide /><YAxis hide domain={[0, 100]} />
-                <Tooltip contentStyle={{ background: '#0f160f', border: '1px solid #14321a', fontSize: 11 }} />
-                <Line type="monotone" dataKey="value" stroke="#22c55e" strokeWidth={2} dot={false} />
+                <Tooltip contentStyle={tip(tc)} />
+                <Line type="monotone" dataKey="value" stroke={tc.accent} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -1040,7 +1048,7 @@ function IntelSection({ intel }: { intel?: Intel }) {
           {lr.recent.length === 0 ? <Empty>No completed trades yet — feedback appears after the first close.</Empty> : (
             <div className="space-y-2 max-h-64 overflow-auto">
               {lr.recent.map((f) => (
-                <div key={f.id} className="border-t border-green-900/20 pt-1 text-xs">
+                <div key={f.id} className="border-t border-border/70 pt-1 text-xs">
                   <p className="flex justify-between"><span>{f.symbol} <span className={f.side === 'LONG' ? 'badge-up' : 'badge-down'}>{f.side}</span> · {f.reason}</span>
                     <span className={f.win ? 'badge-up' : 'badge-down'}>{f.netPnl >= 0 ? '+' : ''}{f.netPnl}</span></p>
                   <p className="text-muted">✅ {f.worked}{!f.win && ` · 🚫 ${f.failed}`}</p>
@@ -1152,15 +1160,15 @@ function LiveTodayCard({ todayRealized, positions }: { todayRealized: number; po
 function MiniStat({ label, value, sub, signed }: { label: string; value: string; sub?: string; signed?: boolean }) {
   const neg = signed && value.includes('-');
   return (
-    <div className="bg-bg rounded p-2 border border-green-900/30">
+    <div className="bg-bg rounded p-2 border border-border">
       <p className="label">{label}</p>
-      <p className={`font-bold ${signed ? (neg ? 'badge-down' : 'badge-up') : 'text-green-100'}`}>{value}</p>
+      <p className={`font-bold ${signed ? (neg ? 'badge-down' : 'badge-up') : 'text-fg'}`}>{value}</p>
       {sub && <p className="text-muted text-xs">{sub}</p>}
     </div>
   );
 }
 function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: string }) {
-  const border = tone === 'good' ? 'border-accent/40' : tone === 'warn' ? 'border-warn/40' : tone === 'blue' ? 'border-sky-700/40' : 'border-green-900/30';
+  const border = tone === 'good' ? 'border-accent/40' : tone === 'warn' ? 'border-warn/40' : tone === 'blue' ? 'border-sky-700/40' : 'border-border';
   return <div className={`card ${border}`}><p className="text-sm"><span className="mr-1">{icon}</span>{text}</p></div>;
 }
 function TradeReasonCard({ t }: { t: TradeReason }) {
@@ -1196,7 +1204,7 @@ function TradeReasonCard({ t }: { t: TradeReason }) {
         {funding !== 0 && (<><span className="text-muted">Funding</span><span className={`text-right ${funding >= 0 ? 'text-accent' : 'text-danger'}`}>{funding >= 0 ? '+' : ''}${funding.toFixed(3)}</span></>)}
         <span className="text-muted font-bold">Actual P&L</span><span className={`text-right font-bold ${actual >= 0 ? 'badge-up' : 'badge-down'}`}>{actual >= 0 ? '+' : ''}${actual.toFixed(3)}</span>
       </div>
-      <p className="text-xs text-muted mt-1.5 border-t border-green-900/20 pt-1.5">
+      <p className="text-xs text-muted mt-1.5 border-t border-border/70 pt-1.5">
         {t.exitReason} · {dur}{t.rr ? ` · R:R ${num(t.rr).toFixed(1)}` : ''} · {new Date(t.closedAt).toLocaleTimeString()}
       </p>
       <p className="text-xs mt-1">{t.reason}</p>
@@ -1240,8 +1248,8 @@ function BotExplainer({ bot }: { bot?: BotCfg }) {
       </summary>
       <div className="grid md:grid-cols-2 gap-3 mt-3">
         {points.map((p, i) => (
-          <div key={i} className="bg-bg rounded p-3 border border-green-900/30">
-            <p className="text-sm font-bold text-green-100"><span className="mr-1">{p.icon}</span>{p.title}</p>
+          <div key={i} className="bg-bg rounded p-3 border border-border">
+            <p className="text-sm font-bold text-fg"><span className="mr-1">{p.icon}</span>{p.title}</p>
             <p className="text-muted text-xs mt-1 leading-relaxed">{p.body}</p>
           </div>
         ))}
@@ -1283,7 +1291,7 @@ function AdaptiveLearningCard({ enabled }: { enabled?: boolean }) {
         <table className="w-full text-sm min-w-[640px]">
           <thead><tr className="text-muted text-xs"><th className="text-left">Coin</th><th>Trades</th><th>Win%</th><th>Net P&L</th><th>Score bar</th><th className="text-left pl-3">What learning did</th></tr></thead>
           <tbody>{d.coins.map((c) => (
-            <tr key={c.symbol} className="border-t border-green-900/30 align-top">
+            <tr key={c.symbol} className="border-t border-border align-top">
               <td className="font-bold">{c.symbol}</td>
               <td className="text-center">{c.trades}</td>
               <td className="text-center">{c.winRate}%</td>
@@ -1312,7 +1320,7 @@ function TradeDetailModal({ symbol, trips, onClose }: { symbol: string; trips: T
           <button className="btn-danger text-xs" onClick={onClose}>✕ Close</button>
         </div>
         {trips.length === 0 ? <Empty>No round-trips</Empty> : trips.map((t) => (
-          <div key={t.id} className="border-t border-green-900/30 py-2 text-sm">
+          <div key={t.id} className="border-t border-border py-2 text-sm">
             <p>
               <span className={t.side === 'LONG' ? 'badge-up' : 'badge-down'}>{t.side}</span>{' '}
               {t.entry} → {t.exit} ·{' '}
@@ -1349,9 +1357,9 @@ function UsageMeter({ u, onSubscribe }: { u: Usage; onSubscribe: (plan: 'BASIC' 
       <div>
         <div className="flex justify-between text-sm mb-1">
           <span className="text-muted">Trades This Month</span>
-          <span className="text-green-100">{u.tradesUsed}{unlimited ? ' · Unlimited' : `/${u.includedTrades}`}</span>
+          <span className="text-fg">{u.tradesUsed}{unlimited ? ' · Unlimited' : `/${u.includedTrades}`}</span>
         </div>
-        {!unlimited && <div className="h-2 bg-bg rounded overflow-hidden border border-green-900/40"><div className="h-full bg-accent" style={{ width: `${pct}%` }} /></div>}
+        {!unlimited && <div className="h-2 bg-bg rounded overflow-hidden border border-border"><div className="h-full bg-accent" style={{ width: `${pct}%` }} /></div>}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <Meter label="Trades" value={unlimited ? 'Unlimited' : `${u.remainingIncludedTrades} left`} />
@@ -1369,5 +1377,5 @@ function UsageMeter({ u, onSubscribe }: { u: Usage; onSubscribe: (plan: 'BASIC' 
   );
 }
 function Meter({ label, value }: { label: string; value: string }) {
-  return <div className="bg-bg rounded p-2 border border-green-900/30"><p className="label">{label}</p><p className="text-green-100 font-bold">{value}</p></div>;
+  return <div className="bg-bg rounded p-2 border border-border"><p className="label">{label}</p><p className="text-fg font-bold">{value}</p></div>;
 }
