@@ -168,9 +168,15 @@ export function runSafetyCheck(
   check('EMA(50/200) golden/death', up ? !!emaCross?.goldenRecent : !!emaCross?.deathRecent, 4, false, t.ema && emaCross != null, true);
   check('Volume spike', !!volSpike, 3, false, t.volume && volSpike != null, true);
 
+  // Market regime: HIGH_RISK (extreme F&G or violent BTC volatility) is NO LONGER a
+  // hard veto — that froze the bot out of valid WITH-trend setups (e.g. shorts in a
+  // downtrend). It's now a heavy scored penalty: risky regimes demand stronger
+  // confluence, but the BTC-direction critical gate below still blocks counter-trend
+  // trades, so we never long a crashing market.
+  check('Market regime calm (not HIGH_RISK)', marketVerdict !== 'HIGH_RISK', 10, false, !!marketVerdict);
+
   // Critical gates
   check('Spread ≤ 0.1%', (spreadPct ?? 1) <= 0.001, 0, true, spreadPct != null);
-  check('Market verdict ≠ HIGH_RISK', marketVerdict !== 'HIGH_RISK', 0, true, !!marketVerdict);
   check(up ? 'BTC not bearish (alt-long gate)' : 'BTC not bullish (alt-short gate)',
     up ? btcTrend !== 'bearish' : btcTrend !== 'bullish', 0, true, !!btcTrend);
   check('Funding < 0.05%', Math.abs(funding ?? 0) < 0.0005, 0, true, funding != null);
