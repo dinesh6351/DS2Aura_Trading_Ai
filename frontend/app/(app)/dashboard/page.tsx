@@ -938,9 +938,8 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
             // trade must have reached for the stop to ratchet there). Ratchets UP only.
             const peakFrac = Math.max(peaksRef.current[p.id] ?? 0, frac, stopLockFrac ?? 0);
             peaksRef.current[p.id] = peakFrac;
-            const peakProg = Math.max(0, Math.min(100, (peakFrac / PROFIT_TAKE_CAP) * 100));
-            // Only while the trade is in PROFIT and has retraced from a higher point.
-            // When negative, the bar stays exactly the default (no peak marker).
+            // Show the max-reached profit % only while in profit and retraced from a
+            // higher point; when negative, nothing extra is shown.
             const showPeak = frac >= 0 && peakFrac > frac + 1e-6;
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
@@ -948,15 +947,12 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
                 <div className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-2">{p.symbol} <span className={long ? 'badge-up' : 'badge-down'}>{p.side}</span> {chartBtn(p.symbol)}</span>
                   <span className="flex items-center gap-1.5">
-                    {showPeak && <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-accent/20 text-accent" title="Highest profit reached">peak +{(peakFrac * 100).toFixed(2)}%</span>}
+                    {showPeak && <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-accent/20 text-accent" title="Max profit reached">max +{(peakFrac * 100).toFixed(2)}%</span>}
                     <span className={cls}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
                   </span>
                 </div>
-                <div className="relative h-2 bg-bg rounded overflow-hidden border border-border my-1">
-                  {/* current profit fill — same color as before */}
+                <div className="h-2 bg-bg rounded overflow-hidden border border-border my-1">
                   <div className={`h-full ${frac >= 0 ? 'bg-accent' : 'bg-danger'}`} style={{ width: `${prog}%` }} />
-                  {/* peak high-water mark — a thin light marker line (not a dark fill) */}
-                  {showPeak && <span className="absolute inset-y-0 w-0.5 bg-accent" style={{ left: `calc(${peakProg}% - 1px)` }} title="Max profit reached" />}
                 </div>
                 <div className="flex justify-between text-xs text-muted">
                   <span>stop: <b className={lock != null ? 'text-accent' : 'text-warn'}>{stopLabel}</b></span>
