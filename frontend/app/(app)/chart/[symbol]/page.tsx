@@ -93,6 +93,9 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
           </select>
         </header>
 
+        {/* My Conditions — user-defined live checks (add / undo / clear), above the chart */}
+        <CustomConditions snap={snap ?? null} sig={sig ?? null} symbol={symbol} />
+
         <div ref={tvRef} className="h-[340px] sm:h-[420px] md:h-[460px] card p-0 overflow-hidden" />
 
         {/* Trade Plan | AI Trade Plan | Snapshot */}
@@ -196,9 +199,6 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
             </>
           ) : <Empty>Computing the strategy checklist…</Empty>}
         </section>
-
-        {/* My Conditions — user-defined live checks (add / undo / clear) */}
-        <CustomConditions snap={snap ?? null} sig={sig ?? null} symbol={symbol} />
 
         {/* Key Technical Indicators | Support & Resistance */}
         <section className="grid md:grid-cols-2 gap-4 md:gap-6">
