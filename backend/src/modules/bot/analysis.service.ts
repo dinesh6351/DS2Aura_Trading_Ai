@@ -223,10 +223,23 @@ export async function signalBreakdown(symbol: string, cfg: BotConfig | null, mar
     ? await effectiveThreshold(cfg.userId, base, symbol)
     : base;
   const r = runSafetyCheck(price, ema8, vwap, rsi3, ctx, threshold);
+  // Snapshot fields the dashboard's SignalRow needs — computed from the SAME candles
+  // so signalsOverview no longer fetches klines + funding a SECOND time per coin
+  // (it used to call snapshot() in parallel with this). Same numbers, half the calls.
+  const snap = {
+    ema8: round(ema8), ema20: round(ctx.ema20 ?? 0), ema50: round(ctx.ema50 ?? 0),
+    rsi3: round(rsi3, 1), rsi14: round(calcRSI(closes, 14), 1),
+    volRatio: round(ctx.volRatio ?? 0, 2),
+    atrPct: round((ctx.atrPct ?? 0) * 100, 3),
+    adx: round(ctx.adx ?? 0, 1),
+    macdHist: round(ctx.macd?.histogram ?? 0, 6),
+    distFromVwapPct: round(((price - vwap) / vwap) * 100, 2),
+  };
   return {
     bias: r.bias, score: r.score, threshold: r.threshold, allPass: r.allPass,
     earnedWeight: r.earnedWeight, totalWeight: r.totalWeight,
     conditions: r.results, criticalFails: r.criticalFails.map((c) => c.label),
+    snap,
   };
 }
 
@@ -243,21 +256,16 @@ export interface SignalRow {
   vwapDeltaPct: number | null; atrPct: number | null; adx: number | null; macdHist: number | null;
   trend: 'up' | 'down' | 'mixed' | 'n/a'; blocking: string;
 }
-const _signalsCache = new Map<string, { at: number; data: SignalRow[] }>();
+const _signalsCache = new Map<string, { at: number; data: SignalRow[]; refreshing?: boolean }>();
 
-export async function signalsOverview(symbols: string[], cfg: BotConfig | null, market: MarketStatus): Promise<SignalRow[]> {
-  const key = `${symbols.join(',')}:${cfg?.scoreThreshold ?? 85}:${market.btcTrend}`;
-  const cached = _signalsCache.get(key);
-  if (cached && Date.now() - cached.at < 20_000) return cached.data;
-
+async function computeSignals(symbols: string[], cfg: BotConfig | null, market: MarketStatus): Promise<SignalRow[]> {
   const rows: SignalRow[] = [];
   for (let i = 0; i < symbols.length; i += 6) {
     const batch = symbols.slice(i, i + 6);
     const part = await Promise.all(batch.map(async (symbol): Promise<SignalRow> => {
-      const [snap, sig] = await Promise.all([
-        snapshot(symbol).catch(() => null),
-        signalBreakdown(symbol, cfg, market).catch(() => null),
-      ]);
+      // ONE pass per coin: signalBreakdown now also returns the snapshot fields the row
+      // needs (from the same candles), so we no longer fetch klines + funding twice.
+      const sig = await signalBreakdown(symbol, cfg, market).catch(() => null);
       if (!sig) {
         // Keep a row even when a symbol can't be analysed right now (e.g. a transient
         // klines failure) so the dashboard's coin count always matches the watchlist.
@@ -267,25 +275,43 @@ export async function signalsOverview(symbols: string[], cfg: BotConfig | null, 
           atrPct: null, adx: null, macdHist: null, trend: 'n/a', blocking: 'No market data yet',
         };
       }
-      const trend = snap == null ? 'n/a'
-        : snap.ema8 > snap.ema20 && snap.ema20 > snap.ema50 ? 'up'
-        : snap.ema8 < snap.ema20 && snap.ema20 < snap.ema50 ? 'down' : 'mixed';
+      const s = sig.snap;
+      const trend = s.ema8 > s.ema20 && s.ema20 > s.ema50 ? 'up'
+        : s.ema8 < s.ema20 && s.ema20 < s.ema50 ? 'down' : 'mixed';
       const topFail = [...sig.conditions].filter((c) => c.active && !c.pass && !c.critical).sort((a, b) => b.weight - a.weight)[0];
       const blocking = sig.bias === 'none' ? 'No directional bias (price between VWAP/EMA8)'
         : sig.criticalFails[0] ?? (sig.allPass ? '— would trade' : topFail?.label ?? 'Below score threshold');
       return {
         symbol, bias: sig.bias, score: sig.score, threshold: sig.threshold, allPass: sig.allPass,
-        ema8: snap?.ema8 ?? null, rsi3: snap?.rsi3 ?? null, rsi14: snap?.rsi14 ?? null,
-        volRatio: snap?.volRatio ?? null, vwapDeltaPct: snap?.distFromVwapPct ?? null,
-        atrPct: snap?.atrPct ?? null, adx: snap?.adx ?? null, macdHist: snap?.macdHist ?? null,
-        trend, blocking,
+        ema8: s.ema8, rsi3: s.rsi3, rsi14: s.rsi14, volRatio: s.volRatio, vwapDeltaPct: s.distFromVwapPct,
+        atrPct: s.atrPct, adx: s.adx, macdHist: s.macdHist, trend, blocking,
       };
     }));
     for (const r of part) rows.push(r);
   }
   rows.sort((a, b) => b.score - a.score);
-  _signalsCache.set(key, { at: Date.now(), data: rows });
   return rows;
+}
+
+export async function signalsOverview(symbols: string[], cfg: BotConfig | null, market: MarketStatus): Promise<SignalRow[]> {
+  const key = `${symbols.join(',')}:${cfg?.scoreThreshold ?? 85}:${market.btcTrend}`;
+  const cached = _signalsCache.get(key);
+  if (cached && Date.now() - cached.at < 20_000) return cached.data;
+  // Stale-while-revalidate: once we have ANY result for this key, serve it INSTANTLY
+  // and refresh in the background. So only the very first load waits for the full
+  // watchlist compute; every later refresh returns immediately (no 10–15s blank cards).
+  if (cached) {
+    if (!cached.refreshing) {
+      cached.refreshing = true;
+      void computeSignals(symbols, cfg, market)
+        .then((data) => _signalsCache.set(key, { at: Date.now(), data }))
+        .catch(() => { cached.refreshing = false; });
+    }
+    return cached.data;
+  }
+  const data = await computeSignals(symbols, cfg, market);
+  _signalsCache.set(key, { at: Date.now(), data });
+  return data;
 }
 
 /** Rule-based News & Research block (free market signals — NOT a paid feed). */
