@@ -4,6 +4,7 @@ import { use, useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
+import { useTheme } from '@/lib/theme';
 
 interface Cond { label: string; pass: boolean; weight: number; critical: boolean; active: boolean; }
 interface PivotLevel { label: string; price: number; dist: number; }
@@ -34,6 +35,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
   const router = useRouter();
   const [detail, setDetail] = useState<ChartDetail>();
   const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [theme] = useTheme();
   const tvRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -51,24 +53,26 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
   }, [load]);
 
   useEffect(() => {
-    if (!tvRef.current) return;
+    const host = tvRef.current;
+    if (!host) return;
+    host.id = 'tv_chart';
     const s = document.createElement('script');
     s.src = 'https://s3.tradingview.com/tv.js';
     s.onload = () => {
+      host.innerHTML = ''; // clear any prior widget before re-creating (symbol/theme change)
       // @ts-expect-error injected global
       new window.TradingView.widget({
         container_id: 'tv_chart', symbol: `BINANCE:${symbol}`, interval: '15',
-        theme: 'dark', style: '1', autosize: true, timezone: 'Etc/UTC',
+        theme: theme === 'dark' ? 'dark' : 'light', style: '1', autosize: true, timezone: 'Etc/UTC',
         studies: ['STD;EMA', 'STD;RSI', 'STD;MACD'],
         hide_side_toolbar: false,  // ← drawing tools (trend line, fib, brush, …)
         hide_top_toolbar: false,   // ← Undo / Redo + timeframe controls
         withdateranges: true, allow_symbol_change: false, save_image: true,
       });
     };
-    tvRef.current.id = 'tv_chart';
     document.body.appendChild(s);
-    return () => { s.remove(); };
-  }, [symbol]);
+    return () => { s.remove(); host.innerHTML = ''; };
+  }, [symbol, theme]);
 
   const plan = detail?.aiTradePlan;
   const snap = detail?.snapshot;
@@ -83,7 +87,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
         {/* Header: symbol + live price + bias/score + coin switcher */}
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <h1 className="text-accent text-lg sm:text-xl font-bold">📈 {symbol}</h1>
+            <h1 className="text-lg sm:text-xl font-semibold tracking-tight">{symbol}</h1>
             <LivePrice symbol={symbol} fallback={snap?.price} />
             {sig && (
               <span className={`text-xs px-2 py-0.5 rounded ${sig.bias === 'long' ? 'badge-up' : sig.bias === 'short' ? 'badge-down' : 'text-muted'}`}>
@@ -92,7 +96,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
             )}
           </div>
           <select value={symbol} onChange={(e) => router.push(`/chart/${e.target.value}`)}
-            className="bg-bg border border-green-900/40 rounded px-3 py-2 text-sm">
+            className="bg-surface border border-border rounded-lg px-3 py-2 text-sm">
             {watchlist.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </header>
@@ -102,7 +106,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
 
         <div ref={tvRef} className="h-[420px] sm:h-[500px] md:h-[560px] card p-0 overflow-hidden" />
         <p className="text-muted text-xs -mt-2">
-          ✏️ Draw with the <b>left toolbar</b> (trend line, fib, brush…). <b>↩ Undo</b>: the curved arrow in the top toolbar (or <kbd className="px-1 border border-green-900/40 rounded">Ctrl</kbd>+<kbd className="px-1 border border-green-900/40 rounded">Z</kbd>). <b>🗑 Clear</b>: the trash / “Remove drawings” tool at the bottom of the left toolbar.
+          ✏️ Draw with the <b>left toolbar</b> (trend line, fib, brush…). <b>↩ Undo</b>: the curved arrow in the top toolbar (or <kbd className="px-1 border border-border rounded">Ctrl</kbd>+<kbd className="px-1 border border-border rounded">Z</kbd>). <b>🗑 Clear</b>: the trash / “Remove drawings” tool at the bottom of the left toolbar.
         </p>
 
         {/* Trade Plan | AI Trade Plan | Snapshot */}
@@ -137,7 +141,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
                 <Row k="Trend" v={snap.ema8 > snap.ema50 ? 'UP' : snap.ema8 < snap.ema50 ? 'DOWN' : 'SIDEWAYS'} /><Row k="ADX" v={snap.adx} />
                 <Row k="Conditions" v={sig ? `${sig.conditions.filter((c) => c.active && c.pass && !c.critical).length}/${sig.conditions.filter((c) => c.active && !c.critical).length}` : '0/0'} />
                 <Row k="vs VWAP" v={`${snap.distFromVwapPct}%`} />
-                <div className="col-span-2 border-t border-green-900/20 mt-1 pt-1 text-xs text-muted">Confidence {sig?.score ?? 0}/100 · threshold {sig?.threshold ?? 80}</div>
+                <div className="col-span-2 border-t border-border/70 mt-1 pt-1 text-xs text-muted">Confidence {sig?.score ?? 0}/100 · threshold {sig?.threshold ?? 80}</div>
               </div>
             ) : <Empty />}
           </div>
@@ -163,7 +167,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
               <table className="w-full text-sm">
                 <thead><tr className="text-muted text-xs"><th className="text-left">TF</th><th className="text-left">Trend</th><th className="text-right">RSI14</th></tr></thead>
                 <tbody>{detail.multiTf.rows.map((r) => (
-                  <tr key={r.tf} className="border-t border-green-900/20">
+                  <tr key={r.tf} className="border-t border-border/70">
                     <td>{r.tf}</td>
                     <td><span className={r.trend === 'BULLISH' ? 'badge-up' : r.trend === 'BEARISH' ? 'badge-down' : 'text-muted'}>{r.trend}</span></td>
                     <td className="text-right text-muted">{r.rsi14 ?? '—'}</td>
@@ -197,7 +201,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
               {sig.bias === 'none' && <p className="text-muted text-xs mb-2">No directional bias yet — the full strategy checklist below scores once price sets a LONG/SHORT bias. ⚪ = not scoring now (no bias, filter off, or no data).</p>}
               <div className="grid sm:grid-cols-2 gap-x-6 text-sm">
                 {sig.conditions.map((c, i) => (
-                  <div key={i} className={`flex justify-between border-t border-green-900/20 py-1 ${c.active ? '' : 'opacity-50'}`}>
+                  <div key={i} className={`flex justify-between border-t border-border/70 py-1 ${c.active ? '' : 'opacity-50'}`}>
                     <span className={c.critical ? 'text-warn' : ''}>{!c.active ? '⚪' : c.pass ? '✅' : '🚫'} {c.label}{c.critical && ' (gate)'}</span>
                     <span className="text-muted">{!c.active ? 'off' : c.critical ? 'CRIT' : `${c.weight}pt`}</span>
                   </div>
@@ -234,7 +238,7 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
                   <p className="text-muted text-xs mb-1">Pivot levels (prev-day H/L/C)</p>
                   <table className="w-full">
                     <tbody>{piv.levels.map((l) => (
-                      <tr key={l.label} className="border-t border-green-900/20">
+                      <tr key={l.label} className="border-t border-border/70">
                         <td className={l.label.startsWith('R') ? 'text-danger' : l.label.startsWith('S') ? 'text-accent' : 'text-warn'}>{l.label}</td>
                         <td className="text-center">{l.price}</td>
                         <td className={`text-right text-xs ${l.dist >= 0 ? 'badge-up' : 'badge-down'}`}>{l.dist >= 0 ? '+' : ''}{l.dist}%</td>
@@ -242,8 +246,8 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
                   </table>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-bg rounded p-2 border border-green-900/30"><p className="text-muted">Nearest resistance</p><p className="text-danger font-bold">{piv.nearestRes?.price ?? '—'} {piv.nearestRes ? `(${piv.nearestRes.dist >= 0 ? '+' : ''}${piv.nearestRes.dist}%)` : ''}</p></div>
-                  <div className="bg-bg rounded p-2 border border-green-900/30"><p className="text-muted">Nearest support</p><p className="text-accent font-bold">{piv.nearestSup?.price ?? '—'} {piv.nearestSup ? `(${piv.nearestSup.dist}%)` : ''}</p></div>
+                  <div className="bg-bg rounded p-2 border border-border"><p className="text-muted">Nearest resistance</p><p className="text-danger font-bold">{piv.nearestRes?.price ?? '—'} {piv.nearestRes ? `(${piv.nearestRes.dist >= 0 ? '+' : ''}${piv.nearestRes.dist}%)` : ''}</p></div>
+                  <div className="bg-bg rounded p-2 border border-border"><p className="text-muted">Nearest support</p><p className="text-accent font-bold">{piv.nearestSup?.price ?? '—'} {piv.nearestSup ? `(${piv.nearestSup.dist}%)` : ''}</p></div>
                 </div>
                 <div>
                   <p className="text-muted text-xs mb-1">Breakout &amp; liquidity-sweep zones</p>
@@ -302,7 +306,7 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex justify-between"><span className="text-muted">{k}</span><span>{v ?? '—'}</span></div>;
 }
 function Ind({ k, v, m }: { k: string; v: React.ReactNode; m?: boolean }) {
-  return <div className="flex justify-between border-t border-green-900/10 py-0.5"><span className="text-muted">{k}</span><span className={m ? 'text-green-100' : ''}>{m && typeof v === 'number' ? `$${v}` : v}</span></div>;
+  return <div className="flex justify-between border-t border-border/60 py-0.5"><span className="text-muted">{k}</span><span className={m ? 'text-fg' : ''}>{m && typeof v === 'number' ? `$${v}` : v}</span></div>;
 }
 function Empty({ children }: { children?: React.ReactNode }) {
   return <p className="text-muted text-sm py-4 text-center">{children ?? 'Loading…'}</p>;
@@ -384,15 +388,15 @@ function CustomConditions({ snap, sig, symbol }: { snap: ChartDetail['snapshot']
 
       {/* builder row */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <select value={metric} onChange={(e) => setMetric(e.target.value)} className="bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm">
+        <select value={metric} onChange={(e) => setMetric(e.target.value)} className="bg-surface border border-border rounded-lg px-2 py-1.5 text-sm">
           {COND_METRICS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
         </select>
-        <select value={op} onChange={(e) => setOp(e.target.value)} className="bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm">
+        <select value={op} onChange={(e) => setOp(e.target.value)} className="bg-surface border border-border rounded-lg px-2 py-1.5 text-sm">
           {COND_OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
         </select>
         <input type="number" step="any" value={value} placeholder="value" onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-          className="w-24 bg-bg border border-green-900/40 rounded px-2 py-1.5 text-sm" />
+          className="w-24 bg-surface border border-border rounded-lg px-2 py-1.5 text-sm" />
         <button onClick={add} className="btn text-sm">+ Add condition</button>
       </div>
 
@@ -403,7 +407,7 @@ function CustomConditions({ snap, sig, symbol }: { snap: ChartDetail['snapshot']
             const res = evalCond(c, snap, sig);
             const cur = metricVal(c.metric, snap, sig);
             return (
-              <div key={c.id} className="flex items-center justify-between border-t border-green-900/20 py-1">
+              <div key={c.id} className="flex items-center justify-between border-t border-border/70 py-1">
                 <span>{res == null ? '⚪' : res ? '✅' : '🚫'} {metricLabel(c.metric)} {opLabel(c.op)} {c.value}</span>
                 <span className="flex items-center gap-2">
                   <span className="text-muted text-xs">now {cur == null ? '—' : +cur.toFixed(4)}</span>
@@ -414,7 +418,7 @@ function CustomConditions({ snap, sig, symbol }: { snap: ChartDetail['snapshot']
           })}
         </div>
       ) : (
-        <p className="text-muted text-sm py-1">No custom conditions yet. Build one above (e.g. <span className="text-green-100">RSI (14) &gt; 55</span>) and press <b>+ Add condition</b>. They evaluate live against the coin you&apos;re viewing and are saved on this device.</p>
+        <p className="text-muted text-sm py-1">No custom conditions yet. Build one above (e.g. <span className="text-fg">RSI (14) &gt; 55</span>) and press <b>+ Add condition</b>. They evaluate live against the coin you&apos;re viewing and are saved on this device.</p>
       )}
     </section>
   );

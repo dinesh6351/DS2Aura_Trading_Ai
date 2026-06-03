@@ -58,11 +58,11 @@ export default function SettingsPage() {
       <AppNav active="settings" />
       <main className="p-3 sm:p-4 md:p-6 space-y-5 md:space-y-6 max-w-4xl mx-auto">
         <header>
-          <h1 className="text-accent text-xl font-bold">👤 Profile</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Profile</h1>
           <p className="text-muted text-sm">Your account details, trading setup, coupons and security — all in one place.</p>
         </header>
 
-        <nav className="flex flex-wrap gap-1 border-b border-green-900/30 overflow-x-auto">
+        <nav className="flex flex-wrap gap-1 border-b border-border overflow-x-auto">
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`px-3 py-2 text-sm rounded-t border-b-2 -mb-px whitespace-nowrap transition ${tab === t.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-accent'}`}>
@@ -108,7 +108,7 @@ function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
     }
   }, [me, loaded]);
 
-  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const inp = 'input';
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value });
 
   async function save() {
@@ -131,7 +131,7 @@ function BasicInfoSection({ me, onChange }: { me?: Me; onChange: () => void }) {
         <KV k="Plan" v={me?.subscription ? `${me.subscription.plan} · ${me.subscription.status}` : '—'} />
         <KV k="Email verified" v={me?.emailVerified ? 'Yes' : 'No'} />
       </div>
-      <div className="grid sm:grid-cols-2 gap-3 border-t border-green-900/20 pt-3">
+      <div className="grid sm:grid-cols-2 gap-3 border-t border-border/70 pt-3">
         <label className="block"><span className="label">Full name</span><input className={inp} value={form.fullName} onChange={set('fullName')} placeholder="Your name" /></label>
         <label className="block"><span className="label">Mobile</span><input className={inp} value={form.mobile} onChange={set('mobile')} placeholder="+91 …" /></label>
         <label className="block"><span className="label">Country</span><input className={inp} value={form.country} onChange={set('country')} placeholder="Country" /></label>
@@ -149,7 +149,7 @@ function EmailVerifyGate({ email, onVerified }: { email?: string; onVerified: ()
   const [code, setCode] = useState('');
   const [dev, setDev] = useState('');
   const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const inp = 'input';
 
   async function send() {
     setErr(''); setNote(''); setDev(''); setBusy(true);
@@ -202,7 +202,7 @@ function CouponSection() {
   }
 
   const pct = status?.nextInvoiceDiscountPct ?? 0;
-  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const inp = 'input';
   return (
     <section className="card space-y-3 max-w-md">
       <p className="label">🎟️ Coupons &amp; discounts</p>
@@ -221,7 +221,7 @@ function CouponSection() {
       {note && <p className="text-accent text-sm">{note}</p>}
       {err && <p className="text-danger text-sm">{err}</p>}
       {!!status?.history.length && (
-        <div className="border-t border-green-900/20 pt-2 text-xs space-y-1">
+        <div className="border-t border-border/70 pt-2 text-xs space-y-1">
           <p className="label">History</p>
           {status.history.map((h, i) => (
             <div key={i} className="flex justify-between text-muted">
@@ -239,7 +239,7 @@ function CouponSection() {
 function ChangePasswordSection() {
   const [cur, setCur] = useState(''); const [next, setNext] = useState(''); const [confirm, setConfirm] = useState('');
   const [note, setNote] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
-  const inp = 'w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm';
+  const inp = 'input';
 
   async function submit() {
     setErr(''); setNote('');
@@ -340,7 +340,7 @@ function BinanceSection({ keys, onChange }: { keys: KeyRow[]; onChange: () => vo
             <button className="btn-danger text-xs" onClick={() => remove(existing.id)}>Remove key</button>
           </div>
           {test && (
-            <div className="bg-bg rounded p-2 border border-green-900/30 mt-2 text-xs">
+            <div className="bg-bg rounded p-2 border border-border mt-2 text-xs">
               <p className="badge-up">✅ Connected to Binance</p>
               <p>Balance: <b>${test.totalBalance.toFixed(2)}</b> · Available: <b>${test.availableBalance.toFixed(2)}</b></p>
               {test.warning && <p className="text-warn mt-1">⚠ {test.warning}</p>}
@@ -350,8 +350,8 @@ function BinanceSection({ keys, onChange }: { keys: KeyRow[]; onChange: () => vo
       ) : (
         <>
           <p className="text-muted text-xs">Create a <b>Futures-enabled, trade-only</b> key on Binance (API Management). <b>Do NOT enable withdrawals.</b> See the setup guide below for exact steps.</p>
-          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Secret Key" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <input className="input" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <input className="input" placeholder="Secret Key" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
           <button className="btn w-full" disabled={busy || !apiKey || !secret} onClick={connect}>{busy ? 'Validating…' : 'Validate & connect'}</button>
         </>
       )}
@@ -366,7 +366,7 @@ function BinanceSection({ keys, onChange }: { keys: KeyRow[]; onChange: () => vo
 function BinanceGuide() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-t border-green-900/20 pt-2">
+    <div className="border-t border-border/70 pt-2">
       <button className="text-accent text-xs" onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} How to create a Binance Futures API key (no withdrawals)</button>
       {open && (
         <ol className="list-decimal ml-5 mt-2 text-xs text-muted space-y-1">
@@ -423,8 +423,8 @@ function TelegramSection({ tg, onChange }: { tg?: TgStatus; onChange: () => void
       ) : (
         <>
           <p className="text-muted text-xs">Get trade alerts in <b>your</b> Telegram. Create a bot with @BotFather and paste its token + your chat id (guide below).</p>
-          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Bot token (123456:ABC-...)" value={botToken} onChange={(e) => setBotToken(e.target.value)} />
-          <input className="w-full bg-bg border border-green-900/40 rounded px-3 py-2 text-sm" placeholder="Chat ID (e.g. 123456789)" value={chatId} onChange={(e) => setChatId(e.target.value)} />
+          <input className="input" placeholder="Bot token (123456:ABC-...)" value={botToken} onChange={(e) => setBotToken(e.target.value)} />
+          <input className="input" placeholder="Chat ID (e.g. 123456789)" value={chatId} onChange={(e) => setChatId(e.target.value)} />
           <button className="btn w-full" disabled={busy || !botToken || !chatId} onClick={save}>{busy ? 'Saving…' : 'Save & send test'}</button>
         </>
       )}
@@ -438,7 +438,7 @@ function TelegramSection({ tg, onChange }: { tg?: TgStatus; onChange: () => void
 function TelegramGuide() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-t border-green-900/20 pt-2">
+    <div className="border-t border-border/70 pt-2">
       <button className="text-accent text-xs" onClick={() => setOpen(!open)}>{open ? '▾' : '▸'} How to create your Telegram bot &amp; find your chat id</button>
       {open && (
         <ol className="list-decimal ml-5 mt-2 text-xs text-muted space-y-1">
@@ -544,11 +544,11 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
             <div className="flex gap-1 mt-0.5">
               {cfg.maxTradesPerDay === 0 ? (
                 <input readOnly value="Unlimited"
-                  className="w-full bg-bg border border-accent/40 text-accent font-medium rounded px-2 py-1" />
+                  className="input border-accent/60 text-accent font-medium" />
               ) : (
                 <input type="number" min={1} value={cfg.maxTradesPerDay}
                   onChange={(e) => setCfg({ ...cfg, maxTradesPerDay: Math.max(1, Number(e.target.value)) })}
-                  className="w-full bg-bg border border-green-900/40 rounded px-2 py-1" />
+                  className="input" />
               )}
               <button type="button" title="Toggle unlimited daily trades (admin only)"
                 onClick={() => setCfg({ ...cfg, maxTradesPerDay: cfg.maxTradesPerDay === 0 ? 10 : 0 })}
@@ -580,7 +580,7 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
       </div>
 
       {/* Adaptive learning (opt-in) — toggles immediately */}
-      <label className="flex items-start gap-2 text-sm border-t border-green-900/20 pt-3">
+      <label className="flex items-start gap-2 text-sm border-t border-border/70 pt-3">
         <input type="checkbox" className="mt-1" checked={!!bot.useAdaptiveLearning}
           onChange={async (e) => {
             setErr('');
@@ -602,7 +602,7 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
             <button key={n} type="button" className="btn text-xs py-0.5 px-2" onClick={() => setTopN(n)}>Top {n}</button>
           ))}
         </div>
-        <textarea className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
+        <textarea className="input text-sm" rows={2} value={wl} onChange={(e) => setWl(e.target.value)} />
         <p className="text-muted text-xs mt-1">Top N = most-traded USDT futures coins by 24h volume, applied instantly. Or type your own symbols and click “Save all settings”.</p>
       </div>
 
@@ -642,11 +642,11 @@ function ActivationSection({ bot, ready, onChange }: { bot: BotCfg; ready: boole
 
 // ── small inputs ─────────────────────────────────────────────────────────────
 function Num({ label, v, onChange, step }: { label: string; v: number; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; step?: string }) {
-  return <label className="block"><span className="label">{label}</span><input type="number" step={step} value={v} onChange={onChange} className="w-full bg-bg border border-green-900/40 rounded px-2 py-1 mt-0.5" /></label>;
+  return <label className="block"><span className="label">{label}</span><input type="number" step={step} value={v} onChange={onChange} className="input mt-0.5" /></label>;
 }
 function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`flex items-center justify-between rounded px-2 py-1.5 border ${on ? 'border-accent/50 text-accent' : 'border-green-900/40 text-muted'}`}>
+    <button onClick={onClick} className={`flex items-center justify-between rounded px-2 py-1.5 border ${on ? 'border-accent/50 text-accent' : 'border-border text-muted'}`}>
       <span>{label}</span><span>{on ? 'ON' : 'OFF'}</span>
     </button>
   );

@@ -1,9 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import {
+  Bot, Activity, Bell, ShieldCheck, Lock, Smartphone,
+  Globe, ArrowRight, Check, CheckCircle2,
+} from 'lucide-react';
 import { BILLING, centsToUsd } from '@platform/shared';
-import { Background3D, RobotMascot } from '@/components/landing3d';
 import { getApiBase } from '@/lib/api';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface Branding {
   appName: string; tagline: string; heroSubtitle: string; logoUrl: string;
@@ -11,12 +15,12 @@ interface Branding {
 }
 
 const FEATURES = [
-  { icon: '🤖', title: 'AI Trading Bot', body: '19-condition scoring engine trades your Binance Futures account automatically — EMA, RSI, MACD, ADX, VWAP, volume & multi-timeframe confirmation.' },
-  { icon: '📊', title: 'Real-Time Dashboard', body: 'Live positions, P&L, win rate, equity curve and bot activity — streamed over WebSocket the instant anything changes.' },
-  { icon: '🔔', title: 'AI Signals', body: 'See every coin scored in real time with the exact reasons a trade passed or was blocked. No black box.' },
-  { icon: '🛡️', title: 'Risk Management', body: 'Break-even, trailing stop, hard SL/TP, daily caps and a margin guard protect every position — even without exchange-side stops.' },
-  { icon: '🔐', title: 'Your Keys, Encrypted', body: 'Your Binance API keys are AES-256 encrypted and isolated. Trade-only — withdrawals never needed. Your funds stay on your account.' },
-  { icon: '📱', title: 'Web & Mobile Ready', body: 'One responsive platform across web and PWA, with native mobile apps on the roadmap — same secure backend.' },
+  { icon: Bot, title: 'AI Trading Bot', body: '50-condition scoring engine trades your Binance Futures account automatically — EMA, RSI, MACD, ADX, VWAP, volume & multi-timeframe confirmation.' },
+  { icon: Activity, title: 'Real-Time Dashboard', body: 'Live positions, P&L, win rate, equity curve and bot activity — streamed over WebSocket the instant anything changes.' },
+  { icon: Bell, title: 'Transparent AI Signals', body: 'See every coin scored in real time with the exact reasons a trade passed or was blocked. No black box.' },
+  { icon: ShieldCheck, title: 'Risk Management', body: 'Break-even, trailing stop, hard SL/TP, daily caps and a margin guard protect every position — even without exchange-side stops.' },
+  { icon: Lock, title: 'Your Keys, Encrypted', body: 'Your Binance API keys are AES-256 encrypted and isolated. Trade-only — withdrawals never needed. Your funds stay on your account.' },
+  { icon: Smartphone, title: 'Web & Mobile Ready', body: 'One responsive platform across web and PWA, with native mobile apps on the roadmap — same secure backend.' },
 ];
 
 export default function Home() {
@@ -34,142 +38,139 @@ export default function Home() {
   const proYear = centsToUsd(BILLING.proAnnualCents);
 
   return (
-    <main className="min-h-screen aurora-bg text-slate-100">
-      <Background3D />
-      <RobotMascot />
-      <div className="neon-grid relative z-10">
-        {/* Nav */}
-        <nav className="max-w-6xl mx-auto flex items-center justify-between px-6 py-5">
-          <span className="flex items-center gap-2 text-xl font-extrabold">
+    <main className="min-h-screen bg-bg text-fg">
+      {/* Nav */}
+      <header className="sticky top-0 z-30 border-b border-border bg-surface/80 backdrop-blur-md">
+        <nav className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-4 sm:px-6 h-14">
+          <span className="flex items-center gap-2 font-semibold tracking-tight">
             {b?.logoUrl
-              ? <img src={b.logoUrl} alt={name} className="h-8 w-auto rounded" />
-              : <span className="grad-text">▚</span>}
-            <BrandName name={name} />
+              ? <img src={b.logoUrl} alt={name} className="h-7 w-auto rounded" />
+              : <span className="grid place-items-center h-7 w-7 rounded-lg bg-accent text-[rgb(var(--accent-fg))] text-sm font-bold">A</span>}
+            <span className="truncate max-w-[44vw] sm:max-w-none">{name}</span>
           </span>
-          <div className="flex items-center gap-3">
-            <a href="/login" className="pill pill-ghost text-sm">Sign in</a>
-            <a href="/register" className="pill pill-primary text-sm">Start free trial</a>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <a href="/login" className="btn-ghost hidden sm:inline-flex">Sign in</a>
+            <a href="/register" className="btn">Start free trial</a>
           </div>
         </nav>
+      </header>
 
-        {/* Hero */}
-        <section className="max-w-6xl mx-auto px-6 pt-16 pb-24 text-center">
-          {b?.logoUrl && <img src={b.logoUrl} alt={name} className="h-20 w-auto mx-auto mb-6 rounded-xl floaty" />}
-          <p className="label text-accent mb-4">Automated Crypto Trading · Binance USDT-M Futures</p>
-          <h1 className="text-5xl md:text-7xl font-extrabold floaty leading-tight"><BrandName name={name} /></h1>
-          <p className="mt-6 text-lg md:text-2xl text-green-200 max-w-2xl mx-auto">{b?.tagline ?? 'Automated crypto trading on your own Binance account'}</p>
-          <p className="mt-4 text-base md:text-lg text-slate-200 max-w-2xl mx-auto leading-relaxed">{heroSub}</p>
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-            <a href="/register" className="pill pill-primary">🚀 Start 30-Day Free Trial</a>
-            <a href="/login" className="pill pill-ghost">Live Dashboard Login</a>
+      {/* Hero */}
+      <section className="relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60rem_30rem_at_50%_-10%,rgb(var(--accent)/0.10),transparent)]" />
+        <div className="max-w-3xl mx-auto px-6 pt-20 pb-16 text-center">
+          {b?.logoUrl && <img src={b.logoUrl} alt={name} className="h-14 w-auto mx-auto mb-6 rounded-xl" />}
+          <span className="chip mb-5"><span className="h-1.5 w-1.5 rounded-full bg-accent" /> Binance USDT-M Futures · Automated</span>
+          <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
+            {b?.tagline ?? 'Automated crypto trading on your own Binance account'}
+          </h1>
+          <p className="mt-6 text-base sm:text-lg text-muted max-w-2xl mx-auto leading-relaxed">{heroSub}</p>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <a href="/register" className="btn px-5 py-2.5 text-base">Start 30-day free trial <ArrowRight size={18} /></a>
+            <a href="/login" className="btn-outline px-5 py-2.5 text-base">Live dashboard login</a>
           </div>
-          {/* web/app links */}
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-6 text-sm">
-            {b?.webUrl && <a className="text-accent hover:underline" href={b.webUrl} target="_blank" rel="noreferrer">🌐 {b.webUrl.replace(/^https?:\/\//, '')}</a>}
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted">
+            {b?.webUrl && <a className="inline-flex items-center gap-1.5 hover:text-fg transition-colors" href={b.webUrl} target="_blank" rel="noreferrer"><Globe size={15} /> {b.webUrl.replace(/^https?:\/\//, '')}</a>}
             {b?.appUrl
-              ? <a className="text-accent hover:underline" href={b.appUrl} target="_blank" rel="noreferrer">📱 Get the app</a>
-              : <span className="text-muted">📱 Mobile app — coming soon</span>}
+              ? <a className="inline-flex items-center gap-1.5 hover:text-fg transition-colors" href={b.appUrl} target="_blank" rel="noreferrer"><Smartphone size={15} /> Get the app</a>
+              : <span className="inline-flex items-center gap-1.5"><Smartphone size={15} /> Mobile app — coming soon</span>}
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* Services */}
-        <section className="max-w-6xl mx-auto px-6 py-12">
-          <h2 className="text-3xl font-bold text-center grad-text mb-2">What you get</h2>
-          <p className="text-center text-muted mb-10">Everything in one platform — included with your plan.</p>
-          <div className="grid md:grid-cols-3 gap-6" style={{ perspective: '1200px' }}>
-            {FEATURES.map((f) => (
-              <div key={f.title} className="glass2 card3d p-6">
-                <div className="text-4xl mb-3">{f.icon}</div>
-                <h3 className="text-lg font-bold text-accent">{f.title}</h3>
-                <p className="text-sm text-green-200 mt-2">{f.body}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+      {/* Features */}
+      <section className="max-w-6xl mx-auto px-6 py-16 sm:py-20">
+        <div className="text-center max-w-2xl mx-auto mb-12">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Everything in one platform</h2>
+          <p className="mt-3 text-muted">A complete trading stack — included with your plan.</p>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {FEATURES.map((f) => (
+            <div key={f.title} className="card hover:shadow-pop transition-shadow">
+              <span className="grid place-items-center h-10 w-10 rounded-lg bg-accent/10 text-accent mb-4"><f.icon size={20} /></span>
+              <h3 className="font-semibold">{f.title}</h3>
+              <p className="mt-2 text-sm text-muted leading-relaxed">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-        {/* Fee structure */}
-        <section className="max-w-6xl mx-auto px-6 py-16">
-          <h2 className="text-3xl font-bold text-center grad-text mb-2">Simple, transparent pricing</h2>
-          <p className="text-center text-muted mb-10">No profit-sharing. No hidden fees. Cancel anytime.</p>
-          <div className="grid md:grid-cols-3 gap-6" style={{ perspective: '1200px' }}>
-            {/* Trial */}
-            <div className="glass2 card3d p-8 text-center">
-              <p className="label">Free Trial</p>
-              <p className="text-5xl font-extrabold grad-text my-3">30 Days</p>
-              <p className="text-muted">Full platform access. One trial per user &amp; Binance account.</p>
-              <ul className="text-sm text-green-200 mt-5 space-y-2 text-left">
-                <li>✅ Full bot + AI signals</li>
-                <li>✅ Real-time dashboard &amp; analytics</li>
-                <li>✅ No card required to start</li>
-              </ul>
-              <a href="/register" className="pill pill-ghost mt-6 inline-block w-full">Start free</a>
-            </div>
-            {/* Basic */}
-            <div className="glass2 card3d neon-border p-8 text-center relative">
-              <span className="absolute top-4 right-4 text-xs px-2 py-1 rounded bg-accent/20 text-accent">POPULAR</span>
-              <p className="label">Basic Plan</p>
-              <p className="text-5xl font-extrabold grad-text my-3">${monthly}<span className="text-lg text-muted">/mo</span></p>
-              <p className="text-muted">Includes <b className="text-green-100">{BILLING.includedTrades} trades</b> / month, then <b className="text-green-100">${overage.toFixed(2)}</b> per extra trade.</p>
-              <ul className="text-sm text-green-200 mt-5 space-y-2 text-left">
-                <li>✅ Everything in the trial, billed monthly</li>
-                <li>✅ Usage-based — pay only for what you trade</li>
-                <li>✅ Live usage meter, no surprises</li>
-              </ul>
-              <a href="/register" className="pill pill-primary mt-6 inline-block w-full">Get started</a>
-            </div>
-            {/* Pro (annual) */}
-            <div className="glass2 card3d grad-border p-8 text-center relative">
-              <span className="absolute top-4 right-4 text-xs px-2 py-1 rounded bg-violet-500/20 text-violet-300">BEST VALUE</span>
-              <p className="label">Pro Plan</p>
-              <p className="text-5xl font-extrabold grad-text my-3">${proYear}<span className="text-lg text-muted">/yr</span></p>
-              <p className="text-muted">{BILLING.proMonthsFree} months free vs monthly. Still <b className="text-green-100">{BILLING.includedTrades} trades</b>/month, then <b className="text-green-100">${overage.toFixed(2)}</b> per extra trade.</p>
-              <ul className="text-sm text-green-200 mt-5 space-y-2 text-left">
-                <li>✅ Everything in Basic, billed yearly</li>
-                <li>✅ Save ${(monthly * 12 - proYear).toFixed(0)} a year ({BILLING.proMonthsFree} months free)</li>
-                <li>✅ Same 150 trades/month + ${overage.toFixed(2)} overage</li>
-              </ul>
-              <a href="/register" className="pill pill-primary mt-6 inline-block w-full">Go Pro</a>
-            </div>
+      {/* Pricing */}
+      <section className="max-w-6xl mx-auto px-6 py-16 sm:py-20 border-t border-border">
+        <div className="text-center max-w-2xl mx-auto mb-12">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Simple, transparent pricing</h2>
+          <p className="mt-3 text-muted">No profit-sharing. No hidden fees. Cancel anytime.</p>
+        </div>
+        <div className="grid md:grid-cols-3 gap-4 items-start">
+          {/* Trial */}
+          <div className="card">
+            <p className="label">Free Trial</p>
+            <p className="mt-2 text-3xl font-semibold tracking-tight">30 Days</p>
+            <p className="mt-2 text-sm text-muted">Full platform access. One trial per user &amp; Binance account.</p>
+            <ul className="mt-5 space-y-2 text-sm">
+              {['Full bot + AI signals', 'Real-time dashboard & analytics', 'No card required to start'].map((t) => <Li key={t}>{t}</Li>)}
+            </ul>
+            <a href="/register" className="btn-outline w-full mt-6">Start free</a>
           </div>
-          <div className="glass2 p-5 mt-6 text-center text-sm text-green-200">
-            <b className="text-accent">Examples:</b> {BILLING.includedTrades} trades = ${monthly} · 200 trades = ${(monthly + 50 * overage).toFixed(0)} · 300 trades = ${(monthly + 150 * overage).toFixed(0)}
+          {/* Basic — highlighted */}
+          <div className="card relative ring-1 ring-accent border-accent/60 md:-mt-2 md:mb-2 shadow-pop">
+            <span className="absolute -top-2.5 right-4 chip bg-accent text-[rgb(var(--accent-fg))] border-transparent">POPULAR</span>
+            <p className="label">Basic Plan</p>
+            <p className="mt-2 text-3xl font-semibold tracking-tight">${monthly}<span className="text-base font-normal text-muted">/mo</span></p>
+            <p className="mt-2 text-sm text-muted">Includes <b className="text-fg">{BILLING.includedTrades} trades</b>/month, then <b className="text-fg">${overage.toFixed(2)}</b> per extra trade.</p>
+            <ul className="mt-5 space-y-2 text-sm">
+              {['Everything in the trial, billed monthly', 'Usage-based — pay only for what you trade', 'Live usage meter, no surprises'].map((t) => <Li key={t}>{t}</Li>)}
+            </ul>
+            <a href="/register" className="btn w-full mt-6">Get started</a>
           </div>
-        </section>
+          {/* Pro */}
+          <div className="card">
+            <p className="label">Pro Plan</p>
+            <p className="mt-2 text-3xl font-semibold tracking-tight">${proYear}<span className="text-base font-normal text-muted">/yr</span></p>
+            <p className="mt-2 text-sm text-muted">{BILLING.proMonthsFree} months free vs monthly. Still <b className="text-fg">{BILLING.includedTrades} trades</b>/month, then <b className="text-fg">${overage.toFixed(2)}</b> per extra trade.</p>
+            <ul className="mt-5 space-y-2 text-sm">
+              {[`Everything in Basic, billed yearly`, `Save $${(monthly * 12 - proYear).toFixed(0)} a year (${BILLING.proMonthsFree} months free)`, `Same ${BILLING.includedTrades} trades/month + $${overage.toFixed(2)} overage`].map((t) => <Li key={t}>{t}</Li>)}
+            </ul>
+            <a href="/register" className="btn-outline w-full mt-6">Go Pro</a>
+          </div>
+        </div>
+        <p className="mt-6 text-center text-sm text-muted">
+          <b className="text-fg">Examples:</b> {BILLING.includedTrades} trades = ${monthly} · 200 trades = ${(monthly + 50 * overage).toFixed(0)} · 300 trades = ${(monthly + 150 * overage).toFixed(0)}
+        </p>
+      </section>
 
-        {/* Feedback */}
-        <FeedbackSection email={b?.feedbackEmail} />
+      {/* Feedback */}
+      <FeedbackSection email={b?.feedbackEmail} />
 
-        {/* Footer */}
-        <footer className="border-t border-green-900/30 mt-10">
-          <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-muted">
-            <span className="flex items-center gap-2 font-bold">
-              {b?.logoUrl ? <img src={b.logoUrl} alt={name} className="h-6 w-auto rounded" /> : <span className="grad-text">▚</span>} <BrandName name={name} />
-            </span>
-            <div className="flex gap-5">
-              <a href="/login" className="hover:text-accent">Sign in</a>
-              <a href="/register" className="hover:text-accent">Register</a>
-              {b?.webUrl && <a href={b.webUrl} className="hover:text-accent" target="_blank" rel="noreferrer">Website</a>}
-              {b?.supportEmail && <a href={`mailto:${b.supportEmail}`} className="hover:text-accent">Support</a>}
-            </div>
-            <span>© {new Date().getFullYear()} {name}. Trading involves risk.</span>
+      {/* Footer */}
+      <footer className="border-t border-border">
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted">
+          <span className="flex items-center gap-2 font-semibold text-fg">
+            {b?.logoUrl
+              ? <img src={b.logoUrl} alt={name} className="h-6 w-auto rounded" />
+              : <span className="grid place-items-center h-6 w-6 rounded-md bg-accent text-[rgb(var(--accent-fg))] text-xs font-bold">A</span>}
+            {name}
+          </span>
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+            <a href="/login" className="hover:text-fg transition-colors">Sign in</a>
+            <a href="/register" className="hover:text-fg transition-colors">Register</a>
+            {b?.webUrl && <a href={b.webUrl} className="hover:text-fg transition-colors" target="_blank" rel="noreferrer">Website</a>}
+            {b?.supportEmail && <a href={`mailto:${b.supportEmail}`} className="hover:text-fg transition-colors">Support</a>}
           </div>
-        </footer>
-      </div>
+          <span>© {new Date().getFullYear()} {name}. Trading involves risk.</span>
+        </div>
+      </footer>
     </main>
   );
 }
 
-/** Renders the brand name with a jumping digit and a shimmering color-moving "AI". */
-function BrandName({ name }: { name: string }) {
-  const parts = name.split(/(\bAI\b|\d)/g).filter(Boolean);
+function Li({ children }: { children: React.ReactNode }) {
   return (
-    <span className="brand-base">
-      {parts.map((p, i) =>
-        /^\d$/.test(p) ? <span key={i} className="brand-jump">{p}</span>
-          : /^AI$/i.test(p) ? <span key={i} className="brand-ai">{p}</span>
-            : <span key={i}>{p}</span>,
-      )}
-    </span>
+    <li className="flex items-start gap-2 text-muted">
+      <Check size={16} className="mt-0.5 shrink-0 text-accent" />
+      <span>{children}</span>
+    </li>
   );
 }
 
@@ -192,20 +193,24 @@ function FeedbackSection({ email }: { email?: string }) {
   }
 
   return (
-    <section className="max-w-3xl mx-auto px-6 py-16">
-      <h2 className="text-3xl font-bold text-center grad-text mb-2">Feedback &amp; support</h2>
-      <p className="text-center text-muted mb-8">Questions or ideas? Tell us — we read everything.{email && <> Or email <a className="text-accent" href={`mailto:${email}`}>{email}</a>.</>}</p>
+    <section className="max-w-2xl mx-auto px-6 py-16 sm:py-20 border-t border-border">
+      <div className="text-center mb-8">
+        <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Feedback &amp; support</h2>
+        <p className="mt-3 text-muted">Questions or ideas? Tell us — we read everything.{email && <> Or email <a className="text-accent hover:underline" href={`mailto:${email}`}>{email}</a>.</>}</p>
+      </div>
       {sent ? (
-        <div className="glass2 p-8 text-center text-accent">✅ Thanks for your feedback — we&apos;ll be in touch.</div>
+        <div className="card flex items-center justify-center gap-2 py-8 text-accent">
+          <CheckCircle2 size={18} /> Thanks for your feedback — we&apos;ll be in touch.
+        </div>
       ) : (
-        <form onSubmit={submit} className="glass2 p-6 space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <input className="bg-bg/60 border border-green-900/40 rounded px-3 py-2" placeholder="Your name" value={form.name} onChange={set('name')} required />
-            <input className="bg-bg/60 border border-green-900/40 rounded px-3 py-2" placeholder="Your email" type="email" value={form.email} onChange={set('email')} required />
+        <form onSubmit={submit} className="card space-y-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <input className="input" placeholder="Your name" value={form.name} onChange={set('name')} required />
+            <input className="input" placeholder="Your email" type="email" value={form.email} onChange={set('email')} required />
           </div>
-          <textarea className="w-full bg-bg/60 border border-green-900/40 rounded px-3 py-2 min-h-28" placeholder="Your message…" value={form.message} onChange={set('message')} required />
+          <textarea className="input min-h-28" placeholder="Your message…" value={form.message} onChange={set('message')} required />
           {err && <p className="text-danger text-sm">{err}</p>}
-          <button className="pill pill-primary w-full">Send feedback</button>
+          <button className="btn w-full">Send feedback</button>
         </form>
       )}
     </section>
