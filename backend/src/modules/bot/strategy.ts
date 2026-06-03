@@ -97,8 +97,12 @@ export function runSafetyCheck(
   // Only ACTIVE ones count toward the score — active = directional bias AND the
   // condition is enabled (toggle) AND its data is present. This keeps the score
   // identical to before (which simply skipped the inactive ones).
-  const check = (label: string, pass: boolean, weight: number, critical = false, enabled = true) =>
-    results.push({ label, pass, weight, critical, active: directional && enabled });
+  // `bonus` = an opportunistic/event signal (breakout, sweep, cross, pattern,
+  // volume spike). Its ABSENCE must not veto a clean trend, so it only counts
+  // toward the score when it actually fires (present + passing). Continuous
+  // regime conditions are always counted while the bias is directional.
+  const check = (label: string, pass: boolean, weight: number, critical = false, enabled = true, bonus = false) =>
+    results.push({ label, pass, weight, critical, active: directional && enabled && (!bonus || pass) });
 
   const room = swingLevels
     ? (up && swingLevels.resistance != null ? ((swingLevels.resistance - price) / price) * 100
@@ -122,13 +126,13 @@ export function runSafetyCheck(
   check('Volume ≥ 1.2× avg', (volRatio ?? 0) >= 1.2, 5, false, t.volume && volRatio != null);
   check('ADX > 25 (trending)', (adx ?? 0) > 25, 5, false, t.adx && adx != null);
   // Pattern / structure (10 pts)
-  check('Candle pattern', up ? !!pattern?.bullish : !!pattern?.bearish, 5, false, !!pattern?.pattern);
+  check('Candle pattern', up ? !!pattern?.bullish : !!pattern?.bearish, 5, false, !!pattern?.pattern, true);
   check('S/R proximity (≥0.5% room)', (room ?? 0) >= 0.5, 5, false, room != null);
   // Higher-confidence layers (25 pts)
   check('Multi-TF agreement', !!multiTfAgree && multiTfAgree.dir === dir && multiTfAgree.passed >= 2, 10, false, !!multiTfAgree);
   check('Market structure', up ? !!marketStructure?.uptrend : !!marketStructure?.downtrend, 6, false, !!marketStructure);
-  check('S/R breakout', up ? !!breakout?.breakoutUp : !!breakout?.breakoutDown, 4, false, !!breakout);
-  check('Liquidity sweep', up ? !!sweep?.sweepLow : !!sweep?.sweepHigh, 3, false, !!sweep);
+  check('S/R breakout', up ? !!breakout?.breakoutUp : !!breakout?.breakoutDown, 4, false, !!breakout, true);
+  check('Liquidity sweep', up ? !!sweep?.sweepLow : !!sweep?.sweepHigh, 3, false, !!sweep, true);
   check('Fear & Greed', up ? (fearGreed?.value ?? 50) <= 75 : (fearGreed?.value ?? 50) >= 25, 2, false, !!fearGreed && typeof fearGreed.value === 'number');
 
   // ═══ Extended professional confirmation suite (oscillators · volume · momentum · trend-follow) ═══
@@ -160,9 +164,9 @@ export function runSafetyCheck(
   check('Keltner channel side', up ? price > (keltner?.mid ?? price) : price < (keltner?.mid ?? price), 3, false, keltner != null);
   check('Within VWAP σ-bands', up ? price < (vwapBands?.upper ?? Infinity) : price > (vwapBands?.lower ?? -Infinity), 3, false, vwapBands != null);
   check('Consecutive candles align', up ? (consec?.up ?? 0) >= 1 : (consec?.down ?? 0) >= 1, 2, false, consec != null);
-  check('EMA(8/20) cross', up ? !!emaCross?.fastBull : !!emaCross?.fastBear, 3, false, t.ema && emaCross != null);
-  check('EMA(50/200) golden/death', up ? !!emaCross?.goldenRecent : !!emaCross?.deathRecent, 4, false, t.ema && emaCross != null);
-  check('Volume spike', !!volSpike, 3, false, t.volume && volSpike != null);
+  check('EMA(8/20) cross', up ? !!emaCross?.fastBull : !!emaCross?.fastBear, 3, false, t.ema && emaCross != null, true);
+  check('EMA(50/200) golden/death', up ? !!emaCross?.goldenRecent : !!emaCross?.deathRecent, 4, false, t.ema && emaCross != null, true);
+  check('Volume spike', !!volSpike, 3, false, t.volume && volSpike != null, true);
 
   // Critical gates
   check('Spread ≤ 0.1%', (spreadPct ?? 1) <= 0.001, 0, true, spreadPct != null);

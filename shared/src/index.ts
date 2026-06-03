@@ -141,16 +141,20 @@ export const MODE_PRESETS: Record<TradingMode, {
   maxConsecutiveLosses: number;
   lossCooldownMin: number;
 }> = {
+  // NB: thresholds are calibrated for the ~50-condition confluence engine — a
+  // normalised score where ~70% agreement across many pro indicators is already
+  // a strong, selective setup. (The old 80-88 values were for the 19-condition
+  // model and would almost never fire against 50 conditions.)
   [TradingMode.CONSERVATIVE]: {
-    scoreThreshold: 88, leverage: 5, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
+    scoreThreshold: 76, leverage: 5, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
     maxConcurrentPositions: 1, maxTradesPerDay: 4, maxConsecutiveLosses: 3, lossCooldownMin: 45,
   },
   [TradingMode.BALANCED]: {
-    scoreThreshold: 85, leverage: 10, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
+    scoreThreshold: 70, leverage: 10, marginPerTradeUsd: 5, slPercent: 1, tpRR: 3,
     maxConcurrentPositions: 3, maxTradesPerDay: 6, maxConsecutiveLosses: 3, lossCooldownMin: 30,
   },
   [TradingMode.AGGRESSIVE]: {
-    scoreThreshold: 80, leverage: 15, marginPerTradeUsd: 5, slPercent: 1.2, tpRR: 5,
+    scoreThreshold: 64, leverage: 15, marginPerTradeUsd: 5, slPercent: 1.2, tpRR: 5,
     maxConcurrentPositions: 5, maxTradesPerDay: 12, maxConsecutiveLosses: 3, lossCooldownMin: 15,
   },
 };
