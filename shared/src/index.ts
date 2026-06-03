@@ -181,6 +181,33 @@ export const PROFIT_LADDER: { trigger: number; lock: number }[] = [
 ];
 export const PROFIT_TAKE_CAP = 0.05; // +5% → take profit (close)
 export const MIN_RISK_REWARD = 3;    // reject setups below 1:3
+
+/**
+ * Scaled take-profit ladder derived from the user's risk config. All level values
+ * are PRICE-MOVE FRACTIONS from entry (e.g. 0.006 = +0.6%); the *SizePct values are
+ * percentages of the original position. SHARED by the engine watchdog and the
+ * Settings ladder preview so the two never drift.
+ *   - TP1 (tp1Pct): book tp1SizePct% and move the stop to break-even.
+ *   - TP2 (slPct × RR × tp2Frac): book tp2SizePct%.
+ *   - TP3 / runner: the remaining runnerSizePct% trails to the full RR target
+ *     (slPct × RR), capped at PROFIT_TAKE_CAP.
+ */
+export interface TpLadder {
+  tp1: number; tp1SizePct: number;
+  tp2: number; tp2SizePct: number;
+  tp3: number; runnerSizePct: number;
+}
+export function tpLadder(cfg: {
+  slPercent: number; tpRR: number;
+  tp1Pct: number; tp1SizePct: number; tp2Frac: number; tp2SizePct: number;
+}): TpLadder {
+  const slFrac = cfg.slPercent / 100;
+  const tp3 = Math.min(slFrac * cfg.tpRR, PROFIT_TAKE_CAP); // full RR target, capped at +5%
+  const tp1 = cfg.tp1Pct / 100;
+  const tp2 = Math.min(tp3, Math.max(tp1, tp3 * cfg.tp2Frac)); // between TP1 and the full target
+  const runnerSizePct = Math.max(0, 100 - cfg.tp1SizePct - cfg.tp2SizePct);
+  return { tp1, tp1SizePct: cfg.tp1SizePct, tp2, tp2SizePct: cfg.tp2SizePct, tp3, runnerSizePct };
+}
 // Binance USDT-M taker fee (0.04% per side). Subtracted from every closed trade
 // so recorded P&L matches the real wallet instead of showing a thin paper win.
 export const TAKER_FEE_RATE = 0.0004;

@@ -1,5 +1,5 @@
 import type { BotConfig } from '@prisma/client';
-import { PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD } from '@platform/shared';
+import { PROFIT_TAKE_CAP as TAKE_PROFIT_CAP, MIN_RISK_REWARD, tpLadder } from '@platform/shared';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { Errors } from '../../lib/http.js';
@@ -17,7 +17,17 @@ import { effectiveThreshold, bustLearningCache } from './learning.service.js';
 const TIMEFRAME = '1m';
 const MULTI_TFS = ['5m', '15m', '1h'];
 
-interface ProtectionDecision { close: boolean; reason: 'TP' | 'SL' | 'TRAIL'; newStopLoss: number | null; lockPct: number | null; }
+interface ProtectionDecision {
+  close: boolean;                 // full close of the remaining position
+  reason: 'TP' | 'SL' | 'TRAIL';
+  newStopLoss: number | null;
+  lockPct: number | null;
+  // Scaled-TP tranche (opt-in): book `partialPct` of the ORIGINAL qty now, then
+  // ride the runner. `markFilled: 'tp2'` means both tranches are now done.
+  partialPct?: number;
+  partialReason?: 'TP1' | 'TP2';
+  markFilled?: 'tp1' | 'tp2';
+}
 
 /**
  * Pure protection evaluator shared by the live and paper watchdogs. Decides
@@ -27,7 +37,8 @@ interface ProtectionDecision { close: boolean; reason: 'TP' | 'SL' | 'TRAIL'; ne
  * break-even) under a +5% take-profit cap; otherwise a fixed SL / (slPct × tpRR) TP.
  */
 function evaluateProtection(
-  pos: { side: string; entryPrice: unknown; stopLoss: unknown; trailingArmed?: boolean },
+  pos: { side: string; entryPrice: unknown; stopLoss: unknown; trailingArmed?: boolean;
+         tp1Filled?: boolean; tp2Filled?: boolean },
   mark: number,
   cfg: BotConfig,
 ): ProtectionDecision {
@@ -38,8 +49,29 @@ function evaluateProtection(
   const tpPct = slPct * Number(cfg.tpRR);
   const protectionOn = cfg.useTrailingStop || cfg.useBreakEven;
 
-  // Take profit: +5% cap when laddering, else the fixed R:R target.
-  const tpLevel = protectionOn ? TAKE_PROFIT_CAP : tpPct;
+  // ── Scaled take-profit ladder (opt-in). Evaluated FIRST so the runner only
+  // closes the final tranche. Booking any tranche moves the stop to break-even,
+  // so a winner can never turn into a loss. One tick can "catch up" through both
+  // tranches if price jumped (TP2 reached with TP1 still unbooked → book both). ──
+  const lad = cfg.useScaledTp ? tpLadder({
+    slPercent: Number(cfg.slPercent), tpRR: Number(cfg.tpRR),
+    tp1Pct: Number(cfg.tp1Pct), tp1SizePct: cfg.tp1SizePct,
+    tp2Frac: Number(cfg.tp2Frac), tp2SizePct: cfg.tp2SizePct,
+  }) : null;
+  if (lad && !pos.tp2Filled) {
+    const beStop = entry; // break-even
+    if (pnlFrac >= lad.tp2) {
+      const pct = (pos.tp1Filled ? lad.tp2SizePct : lad.tp1SizePct + lad.tp2SizePct) / 100;
+      return { close: false, reason: 'TP', newStopLoss: beStop, lockPct: 0, partialPct: pct, partialReason: 'TP2', markFilled: 'tp2' };
+    }
+    if (!pos.tp1Filled && pnlFrac >= lad.tp1) {
+      return { close: false, reason: 'TP', newStopLoss: beStop, lockPct: 0, partialPct: lad.tp1SizePct / 100, partialReason: 'TP1', markFilled: 'tp1' };
+    }
+  }
+
+  // Take profit: with scaled TP the runner closes at the full RR target (lad.tp3);
+  // otherwise the +5% cap when laddering, else the fixed R:R target.
+  const tpLevel = lad ? lad.tp3 : (protectionOn ? TAKE_PROFIT_CAP : tpPct);
   if (pnlFrac >= tpLevel) return { close: true, reason: 'TP', newStopLoss: null, lockPct: null };
 
   // Ratchet the stop up from the user's trail config (favorable moves only): once
@@ -298,7 +330,7 @@ async function openPosition(
     await prisma.position.create({
       data: {
         userId, symbol, side: bias === 'long' ? 'LONG' : 'SHORT', status: 'OPEN',
-        entryPrice, markPrice: entryPrice, quantity: qty, leverage: cfg.leverage,
+        entryPrice, markPrice: entryPrice, quantity: qty, originalQuantity: qty, leverage: cfg.leverage,
         marginUsd, stopLoss, takeProfit, entryScore: score, entryBias: bias,
         binanceOrderId: orderId ? String(orderId) : null,
       },
@@ -363,6 +395,12 @@ async function runWatchdog(
     const filters = await BinanceClient.symbolFilters(pos.symbol).catch(() => null);
     const prot = evaluateProtection(pos, mark, cfg);
 
+    // Scaled-TP tranche: book a partial reduceOnly close + ratchet stop to break-even.
+    if (prot.partialPct && prot.markFilled) {
+      await executePartial(userId, client, cfg, pos, prot, mark, filters, closeSide, long);
+      continue;
+    }
+
     if (prot.close) {
       // Software backup — only reached if the server-side stop hasn't filled yet.
       try {
@@ -417,6 +455,13 @@ async function runPaperWatchdog(userId: string, cfg: BotConfig): Promise<void> {
     const candles = await BinanceClient.klines(pos.symbol, '1m', 2).catch(() => [] as Candle[]);
     const mark = candles[candles.length - 1]?.close ?? Number(pos.markPrice ?? pos.entryPrice);
     const prot = evaluateProtection(pos, mark, cfg);
+    if (prot.partialPct && prot.markFilled) {
+      const filters = await BinanceClient.symbolFilters(pos.symbol).catch(() => null);
+      const long = pos.side === 'LONG';
+      const closeSide = long ? 'SELL' : 'BUY';
+      await executePartial(userId, null, cfg, pos, prot, mark, filters, closeSide, long);
+      continue;
+    }
     if (prot.close) {
       await closePosition(userId, cfg, pos, mark, prot.reason);
     } else if (prot.newStopLoss != null) {
@@ -430,6 +475,116 @@ async function runPaperWatchdog(userId: string, cfg: BotConfig): Promise<void> {
       await prisma.position.update({ where: { id: pos.id }, data: { markPrice: mark } });
     }
   }
+}
+
+/**
+ * Book ONE scaled-TP tranche: record a partial round-trip to the ledger and bank
+ * the realized P&L, WITHOUT closing the position (the caller decrements quantity).
+ * A booked tranche is always a profit, so it resets the consecutive-loss streak.
+ */
+async function bookPartialClose(
+  userId: string, cfg: BotConfig,
+  pos: { id: string; symbol: string; side: string; entryPrice: unknown; leverage: number; openedAt: Date },
+  qty: number, exitPrice: number, reason: 'TP1' | 'TP2',
+): Promise<void> {
+  const entry = Number(pos.entryPrice);
+  const long = pos.side === 'LONG';
+  const grossPnl = (long ? exitPrice - entry : entry - exitPrice) * qty;
+  const feeUsd = 0;           // recorded P&L mirrors the raw price move (see closePosition)
+  const netPnl = grossPnl;
+  await prisma.$transaction(async (tx) => {
+    await tx.tradeHistory.create({
+      data: {
+        userId, symbol: pos.symbol, side: long ? 'LONG' : 'SHORT',
+        entryPrice: entry, exitPrice, quantity: qty, leverage: pos.leverage,
+        grossPnl, feeUsd, netPnl, exitReason: reason, positionId: pos.id,
+        openedAt: pos.openedAt, durationSec: Math.round((Date.now() - pos.openedAt.getTime()) / 1000),
+      },
+    });
+    if (netPnl > 0) await tx.botConfig.update({ where: { userId }, data: { consecutiveLosses: 0 } });
+    await tx.wallet.update({ where: { userId }, data: { lifetimeProfit: { increment: netPnl } } });
+  });
+  bustLearningCache(userId);
+  realtime.publish(`user:${userId}:positions`, { event: 'PARTIAL', symbol: pos.symbol, pnl: netPnl, reason });
+  realtime.publish(`user:${userId}:pnl`, { realized: netPnl });
+  const tag = cfg.paperTrading ? ' [PAPER]' : '';
+  await notify(userId, `🎯 ${reason} booked${tag}`,
+    `${pos.symbol}: booked ${reason} on ${qty} for ${netPnl >= 0 ? '+' : ''}${netPnl.toFixed(4)} USDT — stop at break-even, runner riding.`);
+}
+
+/**
+ * Execute a scaled-TP tranche end-to-end (live or paper): size it to the exchange
+ * step / min-notional, place a reduceOnly partial close (live only), book it to the
+ * ledger, decrement the position, ratchet the stop to break-even (never against the
+ * trade) and move the server-side STOP_MARKET onto the remainder. If the tranche or
+ * the remainder is below the exchange minimum it degrades gracefully — the tranche
+ * is marked filled and the stop ratcheted, so the position simply rides as a single
+ * break-even-protected runner instead of looping on an unplaceable order.
+ */
+async function executePartial(
+  userId: string, client: BinanceClient | null, cfg: BotConfig,
+  pos: { id: string; symbol: string; side: string; entryPrice: unknown; quantity: unknown;
+         originalQuantity: unknown; stopLoss: unknown; leverage: number; openedAt: Date },
+  prot: ProtectionDecision, mark: number,
+  filters: { stepSize: number; tickSize: number; minQty: number; minNotional: number } | null,
+  closeSide: 'BUY' | 'SELL', long: boolean,
+): Promise<void> {
+  const originalQty = Number(pos.originalQuantity ?? pos.quantity);
+  const remaining = Number(pos.quantity);
+  const minQty = filters?.minQty ?? 0;
+  const minNotional = filters?.minNotional || 5;
+  const tpFlags = prot.markFilled === 'tp2' ? { tp1Filled: true, tp2Filled: true } : { tp1Filled: true };
+
+  // Break-even stop, ratcheted only in the favorable direction (never widened).
+  const baseStop = long ? Number(pos.entryPrice) * (1 - Number(cfg.slPercent) / 100)
+                        : Number(pos.entryPrice) * (1 + Number(cfg.slPercent) / 100);
+  const curStop = pos.stopLoss != null ? Number(pos.stopLoss) : baseStop;
+  const beTarget = prot.newStopLoss ?? curStop;
+  const newStop = (long ? beTarget > curStop : beTarget < curStop) ? beTarget : curStop;
+
+  const moveServerStop = async (qty: number) => {
+    if (!client) return;
+    const stopPx = filters ? roundToTick(newStop, filters.tickSize) : newStop;
+    await client.cancelAllOpenOrders(pos.symbol).catch(() => {});
+    await client.placeStopMarket(pos.symbol, closeSide, stopPx, { quantity: qty })
+      .catch((e) => logger.error({ e, pos: pos.id }, 'scaled-TP: move stop failed — software watchdog still guards'));
+  };
+
+  let qtyToClose = filters ? floorToStep(originalQty * (prot.partialPct ?? 0), filters.stepSize)
+                           : roundQty(originalQty * (prot.partialPct ?? 0));
+  qtyToClose = Math.min(qtyToClose, remaining);
+
+  // Tranche too small to place on its own → don't loop: mark filled + ratchet stop.
+  if (qtyToClose <= 0 || qtyToClose < minQty || qtyToClose * mark < minNotional) {
+    await prisma.position.update({
+      where: { id: pos.id },
+      data: { ...tpFlags, breakEvenArmed: true, trailingArmed: true, stopLoss: newStop, markPrice: mark },
+    });
+    await moveServerStop(remaining);
+    return;
+  }
+
+  if (client) {
+    try { await client.marketOrder(pos.symbol, closeSide, qtyToClose, true); }
+    catch (e) { logger.error({ e, pos: pos.id }, 'scaled-TP: partial close order failed'); return; }
+  }
+  await bookPartialClose(userId, cfg, pos, qtyToClose, mark, prot.partialReason ?? 'TP1');
+
+  const newRemaining = remaining - qtyToClose;
+  // Dust remainder → finalize the position (it's effectively fully exited).
+  if (newRemaining <= 0 || newRemaining < minQty || newRemaining * mark < minNotional) {
+    if (client) await client.cancelAllOpenOrders(pos.symbol).catch(() => {});
+    await prisma.position.update({
+      where: { id: pos.id },
+      data: { ...tpFlags, quantity: 0, status: 'CLOSED', exitPrice: mark, closedAt: new Date(), markPrice: mark },
+    });
+    return;
+  }
+  await prisma.position.update({
+    where: { id: pos.id },
+    data: { quantity: newRemaining, ...tpFlags, breakEvenArmed: true, trailingArmed: true, stopLoss: newStop, markPrice: mark },
+  });
+  await moveServerStop(newRemaining);
 }
 
 /** Finalize a position: write trade history, accrue platform fee, update streaks. */

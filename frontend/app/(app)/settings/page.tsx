@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { TradingMode, REGIONS } from '@platform/shared';
+import { TradingMode, REGIONS, tpLadder } from '@platform/shared';
 import { api } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
 
@@ -11,6 +11,7 @@ interface TgStatus { enabled: boolean; configured: boolean; chatId: string | nul
 interface BotCfg {
   status: string; mode: string; paperTrading: boolean; telegramEnabled: boolean; telegramChatId: string | null;
   scoreThreshold: number; leverage: number; marginPerTradeUsd: string; slPercent: string; tpRR: string; trailArmPct?: string; trailGapPct?: string;
+  useScaledTp?: boolean; tp1Pct?: string; tp1SizePct?: number; tp2Frac?: string; tp2SizePct?: number;
   maxConcurrentPositions: number; maxTradesPerDay: number; maxConsecutiveLosses: number; lossCooldownMin: number; marginGuardPct: number;
   useAdxFilter: boolean; useEmaTrend: boolean; useRsi: boolean; useVolume: boolean; useAtr: boolean; useBreakEven: boolean; useTrailingStop: boolean; useAdaptiveLearning?: boolean;
 }
@@ -460,10 +461,13 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
     scoreThreshold: bot.scoreThreshold, leverage: bot.leverage, marginPerTradeUsd: Number(bot.marginPerTradeUsd),
     slPercent: Number(bot.slPercent), tpRR: Number(bot.tpRR),
     trailArmPct: Number(bot.trailArmPct ?? 0.5), trailGapPct: Number(bot.trailGapPct ?? 0.5),
+    tp1Pct: Number(bot.tp1Pct ?? 0.6), tp1SizePct: bot.tp1SizePct ?? 40,
+    tp2Frac: Number(bot.tp2Frac ?? 0.5), tp2SizePct: bot.tp2SizePct ?? 30,
     maxConcurrentPositions: bot.maxConcurrentPositions,
     maxTradesPerDay: bot.maxTradesPerDay, maxConsecutiveLosses: bot.maxConsecutiveLosses,
     lossCooldownMin: bot.lossCooldownMin, marginGuardPct: bot.marginGuardPct,
   });
+  const [scaledTp, setScaledTp] = useState(!!bot.useScaledTp);
   const [toggles, setToggles] = useState({
     useAdxFilter: bot.useAdxFilter, useEmaTrend: bot.useEmaTrend, useRsi: bot.useRsi, useVolume: bot.useVolume,
     useAtr: bot.useAtr, useBreakEven: bot.useBreakEven, useTrailingStop: bot.useTrailingStop,
@@ -493,7 +497,7 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
   async function saveAll() {
     setErr(''); setNote('');
     try {
-      await api.patch('/api/bot/config', { ...cfg, ...toggles });
+      await api.patch('/api/bot/config', { ...cfg, ...toggles, useScaledTp: scaledTp });
       const symbols = wl.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
       await api.put('/api/trading/watchlist', { symbols });
       setNote('✅ Settings + watchlist saved'); onChange(); setTimeout(() => setNote(''), 2500);
@@ -565,6 +569,28 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
         <Num label="Margin guard (%)" v={cfg.marginGuardPct} onChange={set('marginGuardPct')} />
       </div>
 
+      {/* Scaled take-profit ladder (opt-in) */}
+      <div className="border-t border-border/70 pt-3">
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-1" checked={scaledTp} onChange={(e) => setScaledTp(e.target.checked)} />
+          <span>
+            <b>🎯 Scaled take-profit (TP1 / TP2 / runner)</b> <span className="text-muted text-xs">(opt-in)</span>
+            <span className="block text-muted text-xs">Book partial profit in tranches instead of one all-or-nothing exit: TP1 banks a chunk and moves the stop to <b>break-even</b> (the trade can’t turn into a loss), TP2 banks more, and the remaining runner trails for extended upside. All levels derive from your Stop-loss % and R:R. Saved with “Save all settings”. Test in Paper first.</span>
+          </span>
+        </label>
+        {scaledTp && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mt-3">
+              <Num label="TP1 (+%)" v={cfg.tp1Pct} onChange={set('tp1Pct')} step="0.1" />
+              <Num label="TP1 close (%)" v={cfg.tp1SizePct} onChange={set('tp1SizePct')} />
+              <Num label="TP2 (frac of target)" v={cfg.tp2Frac} onChange={set('tp2Frac')} step="0.05" />
+              <Num label="TP2 close (%)" v={cfg.tp2SizePct} onChange={set('tp2SizePct')} />
+            </div>
+            <TpLadderPreview cfg={cfg} />
+          </>
+        )}
+      </div>
+
       {/* Strategy toggles */}
       <div>
         <p className="label mb-1">Strategy filters &amp; protection</p>
@@ -588,8 +614,8 @@ function TradingConfigSection({ bot, watchlist, isAdmin, onChange }: { bot: BotC
             catch (e2) { setErr((e2 as Error).message); }
           }} />
         <span>
-          <b>🧪 Adaptive learning</b> <span className="text-muted text-xs">(opt-in)</span>
-          <span className="block text-muted text-xs">Tunes the score bar per coin from your own closed-trade results — pickier on losers, looser on proven winners, and pauses coins that keep losing. Never changes leverage or size. Test in Paper first.</span>
+          <b>🧠 Self-learning (auto-improve)</b> <span className="text-muted text-xs">(opt-in)</span>
+          <span className="block text-muted text-xs">The bot learns from its own closed trades like a disciplined senior trader — automatically raising the quality bar on coins that lose, easing it for proven winners, and pausing coins that keep losing. It re-checks after every trade; never touches your leverage, size, or safety stops. Test in Paper first.</span>
         </span>
       </label>
 
@@ -643,6 +669,24 @@ function ActivationSection({ bot, ready, onChange }: { bot: BotCfg; ready: boole
 // ── small inputs ─────────────────────────────────────────────────────────────
 function Num({ label, v, onChange, step }: { label: string; v: number; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; step?: string }) {
   return <label className="block"><span className="label">{label}</span><input type="number" step={step} value={v} onChange={onChange} className="input mt-0.5" /></label>;
+}
+function TpLadderPreview({ cfg }: { cfg: { slPercent: number; tpRR: number; tp1Pct: number; tp1SizePct: number; tp2Frac: number; tp2SizePct: number } }) {
+  const lad = tpLadder(cfg);
+  const pct = (f: number) => `+${(f * 100).toFixed(2)}%`;
+  const rows = [
+    { k: `TP1  ${pct(lad.tp1)}`, v: `close ${lad.tp1SizePct}% · stop → break-even` },
+    { k: `TP2  ${pct(lad.tp2)}`, v: `close ${lad.tp2SizePct}%` },
+    { k: `Runner ${pct(lad.tp3)}`, v: `${lad.runnerSizePct}% trails to the full 1:${cfg.tpRR} target` },
+  ];
+  return (
+    <div className="mt-3 rounded border border-accent/30 bg-accent/5 p-3 text-xs space-y-1">
+      <p className="label">Ladder preview — SL {cfg.slPercent}% · R:R 1:{cfg.tpRR}</p>
+      {rows.map((r) => (
+        <div key={r.k} className="flex justify-between gap-3"><span className="text-accent font-mono">{r.k}</span><span className="text-muted text-right">{r.v}</span></div>
+      ))}
+      {lad.runnerSizePct === 0 && <p className="text-warn">⚠ TP1 + TP2 = 100% — no runner left. Lower a size to keep a trailing runner.</p>}
+    </div>
+  );
 }
 function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
   return (

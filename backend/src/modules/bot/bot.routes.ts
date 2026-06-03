@@ -93,6 +93,12 @@ const configSchema = z.object({
   tpRR: z.number().min(0.5).max(20).optional(),
   trailArmPct: z.number().min(0.1).max(10).optional(),
   trailGapPct: z.number().min(0.05).max(10).optional(),
+  // Scaled take-profit ladder
+  useScaledTp: z.boolean().optional(),
+  tp1Pct: z.number().min(0.2).max(5).optional(),
+  tp1SizePct: z.number().int().min(10).max(80).optional(),
+  tp2Frac: z.number().min(0.2).max(0.95).optional(),
+  tp2SizePct: z.number().int().min(10).max(80).optional(),
   maxConcurrentPositions: z.number().min(1).max(20).optional(),
   maxTradesPerDay: z.number().min(0).max(100).optional(), // 0 = unlimited (admin only, enforced in handler)
   maxConsecutiveLosses: z.number().min(1).max(20).optional(),
@@ -106,7 +112,11 @@ const configSchema = z.object({
   useBreakEven: z.boolean().optional(),
   useTrailingStop: z.boolean().optional(),
   useAdaptiveLearning: z.boolean().optional(),
-});
+}).refine(
+  // When both tranche sizes are sent together, keep ≥10% for the trailing runner.
+  (c) => c.tp1SizePct == null || c.tp2SizePct == null || c.tp1SizePct + c.tp2SizePct <= 90,
+  { message: 'TP1 + TP2 size must leave at least 10% for the runner (≤ 90% combined).', path: ['tp2SizePct'] },
+);
 
 botRouter.patch('/config', asyncHandler(async (req, res) => {
   const userId = uid(req);

@@ -327,6 +327,17 @@ model BotConfig {
   // then keep the stop trailGapPct% behind the running profit (ratchets up only).
   trailArmPct            Decimal     @default(0.5) @db.Decimal(6, 3)
   trailGapPct            Decimal     @default(0.5) @db.Decimal(6, 3)
+  // Scaled take-profit ladder (opt-in, default OFF): book partial profit in
+  // tranches instead of one all-or-nothing exit. TP1 at tp1Pct% books tp1SizePct%
+  // and moves the stop to break-even (the trade can no longer become a loss); TP2
+  // at (slPercent × tpRR × tp2Frac) books tp2SizePct%; the remainder rides the
+  // trailing stop to the full RR target. Current single-TP + trail behaviour is
+  // unchanged until useScaledTp is enabled.
+  useScaledTp            Boolean     @default(false)
+  tp1Pct                 Decimal     @default(0.6) @db.Decimal(6, 3)  // min TP %, first tranche + break-even trigger
+  tp1SizePct             Int         @default(40)                     // % of the position booked at TP1
+  tp2Frac                Decimal     @default(0.5) @db.Decimal(6, 3)  // TP2 distance as a fraction of the full RR target
+  tp2SizePct             Int         @default(30)                     // % of the position booked at TP2
   maxConcurrentPositions Int         @default(3)
   maxTradesPerDay        Int         @default(6)
   maxConsecutiveLosses   Int         @default(3)
@@ -386,6 +397,11 @@ model Position {
   takeProfit     Decimal?       @db.Decimal(38, 18)
   breakEvenArmed Boolean        @default(false)
   trailingArmed  Boolean        @default(false)
+  // Scaled-TP tranche bookkeeping (see BotConfig.useScaledTp). originalQuantity is
+  // the size at entry; quantity decrements as TP1/TP2 tranches are booked.
+  originalQuantity Decimal?     @db.Decimal(38, 18)
+  tp1Filled      Boolean        @default(false)
+  tp2Filled      Boolean        @default(false)
   unrealizedPnl  Decimal        @default(0) @db.Decimal(38, 18)
   realizedPnl    Decimal?       @db.Decimal(38, 18)
   entryScore     Int? // 19-condition score at entry
