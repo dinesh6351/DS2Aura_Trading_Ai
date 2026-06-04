@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { TradingMode, REGIONS, tpLadder } from '@platform/shared';
-import { api } from '@/lib/api';
+import { api, ensureSession } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
 
 interface KeyRow { id: string; label: string; status: string; canTrade: boolean; canWithdraw: boolean; lastValidatedAt: string | null; }
@@ -42,7 +42,18 @@ export default function SettingsPage() {
     setKeys(k); setTg(t); setBot(b); setWatchlist(wl); setMe(m);
   }, []);
 
-  useEffect(() => { api.refresh().then(load).catch(() => { window.location.href = '/login'; }); }, [load]);
+  useEffect(() => {
+    let alive = true;
+    ensureSession().then((session) => {
+      if (!alive) return;
+      if (session === 'none') {
+        window.location.href = '/login';
+      } else {
+        load().catch(() => {});
+      }
+    });
+    return () => { alive = false; };
+  }, [load]);
 
   const hasKey = keys.some((k) => k.status === 'VALID');
   const ready = hasKey; // bot can start once a valid key exists

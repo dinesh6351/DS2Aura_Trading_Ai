@@ -82,12 +82,61 @@ async function liveSnapshot(userId: string): Promise<LiveSnapshot> {
  */
 export const tradingService = {
   async account(userId: string) {
-    const [live, acct, cfg, openCount] = await Promise.all([
+    const [live, acct, cfg, openCount, openPos, trades] = await Promise.all([
       liveSnapshot(userId),
       prisma.tradingAccount.findFirst({ where: { userId } }),
       prisma.botConfig.findUnique({ where: { userId }, select: { paperTrading: true } }),
       prisma.position.count({ where: { userId, status: 'OPEN' } }),
+      prisma.position.findMany({ where: { userId, status: 'OPEN' } }),
+      prisma.tradeHistory.findMany({ where: { userId } }),
     ]);
+
+    if (cfg?.paperTrading) {
+      const paperPnl = trades.reduce((sum, t) => sum + Number(t.netPnl), 0);
+      const startBalance = 100.00; // user requested $100
+      
+      let totalUnrealized = 0;
+      let totalMargin = 0;
+      for (const pos of openPos) {
+        const margin = Number(pos.marginUsd);
+        totalMargin += margin;
+        
+        const entry = Number(pos.entryPrice);
+        const mark = Number(pos.markPrice ?? entry);
+        const qty = Number(pos.quantity);
+        const long = pos.side === 'LONG';
+        const pnl = (long ? mark - entry : entry - mark) * qty;
+        totalUnrealized += pnl;
+      }
+
+      const totalBalance = startBalance + paperPnl + totalUnrealized;
+      const marginUsed = totalMargin;
+      const availableBalance = startBalance + paperPnl - totalMargin;
+
+      // Update in DB so other queries see it
+      await prisma.tradingAccount.updateMany({
+        where: { userId },
+        data: {
+          totalBalance,
+          availableBalance,
+          unrealizedPnl: totalUnrealized,
+          marginUsed,
+          lastSyncedAt: new Date()
+        }
+      });
+
+      return {
+        totalBalance,
+        availableBalance,
+        marginUsed,
+        unrealizedPnl: totalUnrealized,
+        currency: acct?.currency ?? 'USDT',
+        openPositions: openCount,
+        lastSyncedAt: new Date(),
+        live: false,
+      };
+    }
+
     const b = live.balance;
     // Open count: paper → our simulated DB rows; live → real exchange positions.
     const open = cfg?.paperTrading ? openCount : (live.positions ? live.positions.length : openCount);

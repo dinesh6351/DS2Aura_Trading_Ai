@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
-import { api, openRealtime, getApiBase } from '@/lib/api';
+import { api, ensureSession, openRealtime, getApiBase } from '@/lib/api';
 import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE, regionLabel } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
 import { useTheme, themeColors } from '@/lib/theme';
@@ -147,8 +147,19 @@ export default function Dashboard() {
   async function refreshAll() { setRefreshing(true); try { await Promise.all([load(), loadSignals()]); } finally { setRefreshing(false); } }
 
   useEffect(() => {
-    api.refresh().then(() => { load(); loadSignals(); loadIntel(); }).catch(() => { window.location.href = '/login'; });
-    api.get<{ id: string }>('/api/me').then(setMe).catch(() => {});
+    let alive = true;
+    ensureSession().then((session) => {
+      if (!alive) return;
+      if (session === 'none') {
+        window.location.href = '/login';
+      } else {
+        load();
+        loadSignals();
+        loadIntel();
+      }
+    });
+    api.get<{ id: string }>('/api/me').then((m) => { if (alive) setMe(m); }).catch(() => {});
+    return () => { alive = false; };
   }, [load, loadSignals, loadIntel]);
 
   // Steady auto-refresh so every card stays live WITHOUT a manual refresh, even
@@ -835,7 +846,7 @@ function useLivePrices(symbols: string[]): Record<string, number> {
       try { const p = await api.get<Record<string, number>>(`/api/trading/ticker?symbols=${symKey}`); if (alive) setPrices(p); } catch { /* keep last */ }
     };
     tick();
-    const t = setInterval(tick, 1000);
+    const t = setInterval(tick, 3000);
     return () => { alive = false; clearInterval(t); };
   }, [symKey]);
   return prices;

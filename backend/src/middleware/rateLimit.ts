@@ -8,7 +8,7 @@ import rateLimit from 'express-rate-limit';
 // Generic API limiter — applied to all /api routes.
 export const apiLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 120,
+  limit: 300,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { ok: false, error: { code: 'RATE_LIMITED', message: 'Too many requests' } },

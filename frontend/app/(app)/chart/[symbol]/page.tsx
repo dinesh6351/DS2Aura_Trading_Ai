@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { api } from '@/lib/api';
+import { api, ensureSession } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
 import { useTheme } from '@/lib/theme';
 
@@ -47,9 +47,22 @@ export default function ChartPage({ params }: { params: Promise<{ symbol: string
   }, [symbol]);
 
   useEffect(() => {
-    api.refresh().then(load).catch(() => { window.location.href = '/login'; });
-    const t = setInterval(() => { load().catch(() => {}); }, 30_000); // refresh analysis every 30s
-    return () => clearInterval(t);
+    let alive = true;
+    ensureSession().then((session) => {
+      if (!alive) return;
+      if (session === 'none') {
+        window.location.href = '/login';
+      } else {
+        load().catch(() => {});
+      }
+    });
+    const t = setInterval(() => {
+      if (alive) load().catch(() => {});
+    }, 30_000); // refresh analysis every 30s
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -295,7 +308,7 @@ function LivePrice({ symbol, fallback }: { symbol: string; fallback?: number }) 
       try { const p = await api.get<Record<string, number>>(`/api/trading/ticker?symbols=${symbol}`); if (alive && p[symbol]) setPrice(p[symbol]); } catch { /* keep */ }
     };
     tick();
-    const t = setInterval(tick, 1000);
+    const t = setInterval(tick, 3000);
     return () => { alive = false; clearInterval(t); };
   }, [symbol]);
   if (price == null) return null;

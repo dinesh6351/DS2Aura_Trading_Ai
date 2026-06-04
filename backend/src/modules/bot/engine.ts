@@ -121,6 +121,109 @@ export async function tickUser(userId: string): Promise<void> {
   // Binance calls for idle paused bots).
   if (cfg.status === 'PAUSED' && (await prisma.position.count({ where: { userId, status: 'OPEN' } })) === 0) return;
 
+  if (cfg.paperTrading) {
+    // 1. Calculate and sync simulated paper balance
+    const [trades, openPos] = await Promise.all([
+      prisma.tradeHistory.findMany({ where: { userId } }),
+      prisma.position.findMany({ where: { userId, status: 'OPEN' } })
+    ]);
+    const paperPnl = trades.reduce((sum, t) => sum + Number(t.netPnl), 0);
+    const startBalance = 100.00; // user requested $100
+    
+    let totalUnrealized = 0;
+    let totalMargin = 0;
+    for (const pos of openPos) {
+      const margin = Number(pos.marginUsd);
+      totalMargin += margin;
+      
+      const entry = Number(pos.entryPrice);
+      const mark = Number(pos.markPrice ?? entry);
+      const qty = Number(pos.quantity);
+      const long = pos.side === 'LONG';
+      const pnl = (long ? mark - entry : entry - mark) * qty;
+      totalUnrealized += pnl;
+    }
+    
+    const totalBalance = startBalance + paperPnl + totalUnrealized;
+    const marginUsed = totalMargin;
+    const availableBalance = startBalance + paperPnl - totalMargin;
+
+    await prisma.tradingAccount.updateMany({
+      where: { userId },
+      data: {
+        totalBalance,
+        availableBalance,
+        unrealizedPnl: totalUnrealized,
+        marginUsed,
+        lastSyncedAt: new Date()
+      },
+    });
+
+    await runPaperWatchdog(userId, cfg);
+
+    // Open positions are now protected. Everything below OPENS new trades, so it's
+    // gated to RUNNING — a PAUSED bot manages existing positions but takes no new ones.
+    if (cfg.status !== 'RUNNING') return;
+
+    // 2. subscription gate — VIEW-ONLY when trial/subscription has lapsed.
+    if (!(await billingService.canTradeNow(userId))) {
+      realtime.publish(`user:${userId}:signals`, { decisions: [], viewOnly: true, at: Date.now() });
+      return;
+    }
+
+    // 3. risk pre-checks
+    if (cfg.consecutiveLosses >= cfg.maxConsecutiveLosses) {
+      await pauseWithError(userId, `Auto-paused after ${cfg.consecutiveLosses} consecutive losses`);
+      return;
+    }
+    // maxTradesPerDay = 0 means UNLIMITED (admin) — skip the daily cap entirely.
+    if (cfg.maxTradesPerDay > 0 && cfg.tradesToday >= cfg.maxTradesPerDay) { await pauseForDailyCap(userId, cfg.maxTradesPerDay); return; }
+    // Concurrency: in PAPER mode count our simulated DB positions; in LIVE mode
+    // count what's actually on the exchange.
+    const dbOpen = await prisma.position.findMany({ where: { userId, status: 'OPEN' }, select: { symbol: true } });
+    const openCount = dbOpen.length;
+    if (openCount >= cfg.maxConcurrentPositions) return;
+
+    // 50% margin guard
+    const usedMarginPct = totalBalance > 0
+      ? (marginUsed / totalBalance) * 100 : 100;
+    if (usedMarginPct >= cfg.marginGuardPct) return;
+
+    // 3. scan watchlist
+    const watchlist = await prisma.watchlist.findFirst({ where: { userId, isDefault: true } });
+    const symbols = watchlist?.symbols ?? ['BTCUSDT'];
+    const heldSymbols = new Set(dbOpen.map((p) => p.symbol));
+    const decisions: Array<{ symbol: string; bias: string; score: number; allPass: boolean }> = [];
+    const market = await getMarketStatus(); // shared across all tenants, cached 60s
+
+    let slotsLeft = cfg.maxConcurrentPositions - openCount;
+    let dailyLeft = cfg.maxTradesPerDay > 0 ? cfg.maxTradesPerDay - cfg.tradesToday : Infinity; // remaining trades allowed TODAY (0 cap = unlimited); enforced per-trade so we never overshoot within one tick
+    let availableLeft = availableBalance; // decremented as we allocate this tick
+    const marginUsd = Number(cfg.marginPerTradeUsd);
+    // Rank highest-confidence setups first so the best ones win the open slots.
+    const ranked: Array<{ symbol: string; bias: 'long' | 'short'; entryPrice: number; score: number }> = [];
+    for (const symbol of symbols) {
+      if (heldSymbols.has(symbol)) continue; // never stack the same coin
+      const decision = await evaluateSymbol(symbol, cfg, market);
+      decisions.push({ symbol, bias: decision.bias, score: decision.score, allPass: decision.allPass });
+      if (decision.allPass && decision.entryPrice) {
+        ranked.push({ symbol, bias: decision.bias as 'long' | 'short', entryPrice: decision.entryPrice, score: decision.score });
+      }
+    }
+    ranked.sort((a, b) => b.score - a.score);
+    for (const r of ranked) {
+      if (slotsLeft <= 0 || dailyLeft <= 0) break; // stop at the daily cap, never over it
+      const opened = await openPosition(userId, null as any, cfg, r.symbol, r.bias, r.entryPrice, r.score, availableLeft);
+      if (opened) { slotsLeft--; dailyLeft--; availableLeft -= marginUsd; }
+    }
+
+    await prisma.botConfig.update({ where: { userId }, data: { lastTickAt: new Date() } });
+    realtime.publish(`user:${userId}:signals`, { decisions, at: Date.now() });
+    // Reached the daily limit this tick → pause; the bot won't trade again until Start.
+    if (dailyLeft <= 0) await pauseForDailyCap(userId, cfg.maxTradesPerDay);
+    return;
+  }
+
   let creds;
   try {
     creds = await apiKeyService.getDecryptedCreds(userId);
@@ -138,8 +241,7 @@ export async function tickUser(userId: string): Promise<void> {
     where: { userId },
     data: { totalBalance: balance.totalUsdt, availableBalance: balance.availableUsdt, lastSyncedAt: new Date() },
   });
-  if (cfg.paperTrading) await runPaperWatchdog(userId, cfg);
-  else await runWatchdog(userId, client, cfg, exchangePositions);
+  await runWatchdog(userId, client, cfg, exchangePositions);
 
   // Open positions are now protected. Everything below OPENS new trades, so it's
   // gated to RUNNING — a PAUSED bot manages existing positions but takes no new ones.
@@ -163,7 +265,7 @@ export async function tickUser(userId: string): Promise<void> {
   // Concurrency: in PAPER mode count our simulated DB positions; in LIVE mode
   // count what's actually on the exchange.
   const dbOpen = await prisma.position.findMany({ where: { userId, status: 'OPEN' }, select: { symbol: true } });
-  const openCount = cfg.paperTrading ? dbOpen.length : exchangePositions.length;
+  const openCount = exchangePositions.length;
   if (openCount >= cfg.maxConcurrentPositions) return;
 
   // 50% margin guard
@@ -174,9 +276,7 @@ export async function tickUser(userId: string): Promise<void> {
   // 3. scan watchlist
   const watchlist = await prisma.watchlist.findFirst({ where: { userId, isDefault: true } });
   const symbols = watchlist?.symbols ?? ['BTCUSDT'];
-  const heldSymbols = new Set(
-    cfg.paperTrading ? dbOpen.map((p) => p.symbol) : exchangePositions.map((p) => p.symbol),
-  );
+  const heldSymbols = new Set(exchangePositions.map((p) => p.symbol));
   const decisions: Array<{ symbol: string; bias: string; score: number; allPass: boolean }> = [];
   const market = await getMarketStatus(); // shared across all tenants, cached 60s
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, getApiBase } from '@/lib/api';
+import { api, ensureSession, getApiBase } from '@/lib/api';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface Overview {
@@ -43,9 +43,18 @@ export default function AdminPage() {
     setUsers(r.users);
   }
   useEffect(() => {
-    api.refresh().then(load).catch(() => { window.location.href = '/login'; });
-    api.get<Branding>('/api/admin/settings/branding').then(setBrand).catch(() => {});
-    api.get<Report>('/api/admin/reports').then(setReport).catch(() => {});
+    let alive = true;
+    ensureSession().then((session) => {
+      if (!alive) return;
+      if (session === 'none') {
+        window.location.href = '/login';
+      } else {
+        load().catch(() => {});
+      }
+    });
+    api.get<Branding>('/api/admin/settings/branding').then((b) => { if (alive) setBrand(b); }).catch(() => {});
+    api.get<Report>('/api/admin/reports').then((r) => { if (alive) setReport(r); }).catch(() => {});
+    return () => { alive = false; };
   }, []);
 
   function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {

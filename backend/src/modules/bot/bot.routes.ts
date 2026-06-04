@@ -25,14 +25,17 @@ botRouter.get('/status', asyncHandler(async (req, res) => {
   return ok(res, safe);
 }));
 
-/** POST /api/bot/start — requires a valid API key on file. */
+/** POST /api/bot/start — requires a valid API key on file ONLY when not in paper trading. */
 botRouter.post('/start', asyncHandler(async (req, res) => {
   const userId = uid(req);
   if (!(await billingService.canTradeNow(userId))) {
     throw Errors.forbidden('Your trial/subscription has ended. Subscribe to re-enable the bot (view-only until then).');
   }
-  const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID', canTrade: true } });
-  if (!key) throw Errors.badRequest('Connect a valid Binance key with Futures permission first');
+  const config = await prisma.botConfig.findUnique({ where: { userId } });
+  if (!config?.paperTrading) {
+    const key = await prisma.apiKey.findFirst({ where: { userId, status: 'VALID', canTrade: true } });
+    if (!key) throw Errors.badRequest('Connect a valid Binance key with Futures permission first');
+  }
   // If a NEW local day has begun since the last reset, clear today's trade counter so
   // Start isn't immediately re-paused by a stale daily-limit count (same-day at the
   // cap is left as-is, so restarting can't bypass the limit within the same day).
