@@ -250,8 +250,8 @@ export default function Dashboard() {
           <Card label="Volume" value={fmt(d.volume)} />
         </section>
 
-        {/* Top Opportunity (2/3) + Next Trade Preview (1/3) — directly under the KPI rows */}
-        <section className="grid md:grid-cols-3 gap-6">
+        {/* Top Opportunity + Next Trade Preview + Fear & Greed — directly under the KPI rows */}
+        <section className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="card md:col-span-2">
             <p className="label mb-2">🎯 Top Opportunity — Live</p>
             {!d.top ? <Empty>No directional candidate right now — bot is standing aside.</Empty> : (
@@ -288,6 +288,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+          <FearGreedCard fg={intel?.fearGreed} tc={tc} />
         </section>
 
         {/* Account & Trade Detail — current settings (kept at top with the KPIs) */}
@@ -1092,15 +1093,12 @@ function AiProfitPotential({ positions, signals, slPercent, tpRR }: { positions:
 /** AI & Strategy Intelligence: regime + active strategy, strategy performance,
  *  Fear & Greed, trade learning/feedback, and market intelligence (§17-22). */
 function IntelSection({ intel }: { intel?: Intel }) {
-  const [theme] = useTheme();
-  const tc = themeColors(theme);
   if (!intel) return <section className="card"><Empty>Loading AI &amp; strategy intelligence…</Empty></section>;
-  const { strategy: st, fearGreed: fg, learning: lr, marketIntel: mi } = intel;
+  const { strategy: st, learning: lr, marketIntel: mi } = intel;
   const regimeCls = st.regime.includes('UP') ? 'badge-up' : st.regime.includes('DOWN') ? 'badge-down' : st.regime === 'VOLATILE' ? 'text-warn' : 'text-muted';
-  const fgCls = fg.value <= 25 ? 'badge-down' : fg.value <= 45 ? 'text-warn' : fg.value <= 55 ? 'text-muted' : fg.value <= 75 ? 'text-warn' : 'badge-down';
   return (
     <>
-      <section className="grid md:grid-cols-3 gap-4 md:gap-6">
+      <section className="grid md:grid-cols-2 gap-4 md:gap-6">
         {/* AI Learning Center */}
         <div className="card">
           <p className="label mb-2">🧠 AI Learning Center</p>
@@ -1134,28 +1132,6 @@ function IntelSection({ intel }: { intel?: Intel }) {
               <p className="text-muted">{st.avoid.length ? st.avoid.join(', ') : 'none — all families fit'}</p>
             </div>
           </div>
-        </div>
-
-        {/* Fear & Greed */}
-        <div className="card">
-          <p className="label mb-2">😱 Fear &amp; Greed</p>
-          <div className="text-center">
-            <p className={`text-4xl font-bold ${fgCls}`}>{fg.value}</p>
-            <p className={`text-sm ${fgCls}`}>{fg.label}</p>
-            <p className="text-muted text-[11px] mt-0.5">alternative.me · drives the bot</p>
-            {fg.cmc && (
-              <p className="text-muted text-xs mt-1">CoinMarketCap: <span className="font-semibold">{fg.cmc.value}</span> · {fg.cmc.label}</p>
-            )}
-          </div>
-          {fg.history.length > 1 && (
-            <ResponsiveContainer width="100%" height={56}>
-              <LineChart data={fg.history}><XAxis dataKey="date" hide /><YAxis hide domain={[0, 100]} />
-                <Tooltip contentStyle={tip(tc)} />
-                <Line type="monotone" dataKey="value" stroke={tc.accent} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-          <p className="text-muted text-xs mt-1">{fg.recommendation}</p>
         </div>
       </section>
 
@@ -1334,6 +1310,36 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex justify-between"><span className="text-muted">{k}</span><span>{v}</span></div>;
 }
 function Empty({ children }: { children: React.ReactNode }) { return <p className="text-muted text-sm py-6 text-center">{children}</p>; }
+
+/** 😱 Fear & Greed card — big alt.me number (drives the bot) + CoinMarketCap for
+ *  reference + history sparkline + regime recommendation. Shown up top next to the
+ *  Next Trade Preview. `fg` comes from the /intelligence payload. */
+function FearGreedCard({ fg, tc }: { fg?: Intel['fearGreed']; tc: ReturnType<typeof themeColors> }) {
+  if (!fg) return <div className="card"><p className="label mb-2">😱 Fear &amp; Greed</p><Empty>Loading…</Empty></div>;
+  const fgCls = fg.value <= 25 ? 'badge-down' : fg.value <= 45 ? 'text-warn' : fg.value <= 55 ? 'text-muted' : fg.value <= 75 ? 'text-warn' : 'badge-down';
+  return (
+    <div className="card">
+      <p className="label mb-2">😱 Fear &amp; Greed</p>
+      <div className="text-center">
+        <p className={`text-4xl font-bold ${fgCls}`}>{fg.value}</p>
+        <p className={`text-sm ${fgCls}`}>{fg.label}</p>
+        <p className="text-muted text-[11px] mt-0.5">alternative.me · drives the bot</p>
+        {fg.cmc && (
+          <p className="text-muted text-xs mt-1">CoinMarketCap: <span className="font-semibold">{fg.cmc.value}</span> · {fg.cmc.label}</p>
+        )}
+      </div>
+      {fg.history.length > 1 && (
+        <ResponsiveContainer width="100%" height={56}>
+          <LineChart data={fg.history}><XAxis dataKey="date" hide /><YAxis hide domain={[0, 100]} />
+            <Tooltip contentStyle={tip(tc)} />
+            <Line type="monotone" dataKey="value" stroke={tc.accent} strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+      <p className="text-muted text-xs mt-1">{fg.recommendation}</p>
+    </div>
+  );
+}
 
 /** Plain-English meaning of each CRITICAL safety gate, so the hover detail says
  *  exactly WHAT is blocking — not just the gate's terse name. */
