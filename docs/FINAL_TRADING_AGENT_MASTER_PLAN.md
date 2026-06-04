@@ -4,7 +4,17 @@
 
 > **Audience:** founder/operator + engineers.
 > **Philosophy:** *Capital preservation first. Avoid bad trades. Boring, consistent, cheap, automated.*
-> **Companion docs:** [`07-ai-ml-llm-roadmap.md`](./07-ai-ml-llm-roadmap.md) (ML/LLM detail) · [`08-how-the-bot-works-today.md`](./08-how-the-bot-works-today.md) (current system).
+>
+> 📌 **Scope note:** This doc covers the **trading engine / AI** specifically. DS2AuraTrading is a **complete commercial SaaS** (landing, auth, dashboard, profile, charts, analytics, admin, billing) — the rest of the product is designed in the companion master plans below. Read this for *how it trades*; read the others for *how it ships as a business*.
+>
+> **📚 Master-plan doc set:**
+> - **This** — Trading engine, AI/ML/LLM, risk, infra for the bot
+> - [`PRODUCT_ARCHITECTURE_MASTER_PLAN.md`](./PRODUCT_ARCHITECTURE_MASTER_PLAN.md) — whole-product review: dashboard, profile, exchange/strategy/risk UI, analytics, mobile
+> - [`USER_JOURNEY_MASTER_PLAN.md`](./USER_JOURNEY_MASTER_PLAN.md) — visitor → registration/auth → onboarding → retention
+> - [`ADMIN_PORTAL_MASTER_PLAN.md`](./ADMIN_PORTAL_MASTER_PLAN.md) — metrics, user mgmt, KYC, global kill-switch, oversight
+> - [`SAAS_PLATFORM_MASTER_PLAN.md`](./SAAS_PLATFORM_MASTER_PLAN.md) — plans/pricing, billing, notifications, analytics, monetization
+> - [`PRODUCTION_DEPLOYMENT_MASTER_PLAN.md`](./PRODUCTION_DEPLOYMENT_MASTER_PLAN.md) — environments, CI/CD, observability, security, scaling, incident response
+> - [`07-ai-ml-llm-roadmap.md`](./07-ai-ml-llm-roadmap.md) (ML/LLM detail) · [`08-how-the-bot-works-today.md`](./08-how-the-bot-works-today.md) (current engine)
 >
 > ⚠️ **Honest disclaimer (read once):** No system "wins every trade." Crypto is non-stationary and adversarial. The realistic edge here is **fewer bad trades, smaller drawdowns, faster adaptation, and low cost** — not certainty. Every change is proven in **paper** before it risks a cent.
 
@@ -12,6 +22,7 @@
 
 ## 📑 Table of Contents
 
+0. [Prerequisites — what we need, what we pay, what we already have](#0-prerequisites)
 1. [Executive Summary](#1-executive-summary)
 2. [Current State Audit](#2-current-state-audit)
 3. [Architecture Review](#3-architecture-review)
@@ -32,6 +43,77 @@
 18. [Final Cost Breakdown](#18-final-cost-breakdown)
 19. [Expected Benefits](#19-expected-benefits)
 20. [Priority Actions](#20-priority-actions)
+
+---
+
+## 0. Prerequisites
+
+> Everything needed to **build & run V2**, split four ways: **✅ already have** (no new cost),
+> **🆕 need to get**, **💸 what you pay**, and **🚫 what you do NOT need** (so no money is wasted).
+> The full cost model is in [§18](#18-final-cost-breakdown).
+
+### 0.1 ✅ Already have (present in V1 — reuse, don't re-buy)
+
+| Item | Status |
+|---|---|
+| Codebase + architecture (Express · Prisma · Next.js · Postgres · Redis-ready) | ✅ copied into V2 |
+| Binance USDT-M Futures integration (per-user client + rate-limit circuit breaker) | ✅ |
+| Multi-tenant auth · AES-256-GCM key encryption · JWT · 2FA · RBAC | ✅ |
+| Deterministic rule engine + protection (SL / TP / break-even / trailing) | ✅ |
+| Paper-trading mode (simulate on live prices, no real orders) | ✅ |
+| Opt-in adaptive learning (per-coin score bar) | ✅ |
+| Supabase Postgres (database) | ✅ free tier |
+| GitHub (V1 + the new **private** V2 repo) | ✅ |
+| Railway deploy pipeline (V1) | ✅ |
+| Claude Code (development assistant) | ✅ your subscription |
+| Full plan + current-system docs (`07` / `08` / this file) | ✅ |
+
+→ **The entire foundation already exists.** V2 *adds layers on top* — it does not rebuild.
+
+### 0.2 🆕 Need to get (new for V2, by phase)
+
+| Phase | What you need | Cost |
+|---|---|---|
+| **P0 / P1** (data + risk) | *(optional)* a **separate Supabase project** for V2 testing; a Binance **sub-account / testnet** to test safely | free |
+| **P2** (ML) | Python 3.11 + **LightGBM** + **onnxruntime** (all open-source); somewhere to run a **weekly** training job (your laptop or the VPS) | free |
+| **P3** (LLM sentiment) | **one** cheap LLM API key — **DeepSeek** *or* **Gemini (free tier)** *or* **Claude Haiku**; a **free** news source (CryptoPanic free / RSS) | ~free |
+| **P4** (multi-exchange) | **test accounts + trade-only API keys** on Bybit / OKX / Bitget / CoinEx (production keys belong to the *users*, not you) | free |
+| **P6** (infra / prod) | a cheap **VPS** (Hetzner / Contabo) · *(optional)* a **domain** · **Cloudflare** (free) · **Sentry** (free tier) · a **secrets manager** (Doppler / Infisical free tier) | mostly free |
+| Dev tooling | Node 20+ · Docker · Git | already installed |
+
+### 0.3 💸 What you pay (realistic, recurring)
+
+| Item | When | Cost | Notes |
+|---|---|---|---|
+| VPS (production) | P6 / go-live | **$6–13/mo** | Hetzner CX22/CX32 — **flat** to ~100 users |
+| Supabase | at scale | **$0 → $25/mo** | free tier is fine for dev + small prod |
+| LLM sentiment | P3 | **~$1–4/mo total** | **shared** across all users → stays flat |
+| Domain (optional) | go-live | **~$10/yr** | nice-to-have, not required |
+| Sentry · Cloudflare · secrets mgr | P6 | **$0** | free tiers |
+| ML training compute | P2+ | **~$0** | CPU, weekly, on the VPS/laptop |
+| **To START building (P0–P2)** | now | **$0** | nothing new to buy |
+| **At production (≤100 users)** | go-live | **~$8–15/mo** | full detail in [§18](#18-final-cost-breakdown) |
+
+→ **You can build P0, P1 and P2 for $0.** The first real dollar is the optional LLM key (P3) and the VPS (P6).
+→ **Live trading needs a funded exchange account — but that's the *user's* money, not a platform cost. Paper mode needs no funds.**
+
+### 0.4 🚫 What you do NOT need (don't waste money)
+
+- ❌ **No GPU / ML rig** — LightGBM runs on CPU; the LLM is a hosted API.
+- ❌ **No Kubernetes / AWS / GCP** — overkill until ~1,000+ users; one VPS is plenty.
+- ❌ **No paid market-data feed** — exchange public endpoints (klines / funding / OI / depth) are free.
+- ❌ **No paid news / terminal** (Bloomberg, paid TradingView, paid news API) — free RSS / CryptoPanic to start.
+- ❌ **No expensive frontier LLM at runtime** — sentiment is a cheap-model job; never pay Opus/GPT-5 per tick.
+- ❌ **No multi-LLM "agent swarm"** — slow, costly, fragile; use 5 deterministic services + 1 cheap LLM ([§17](#17-final-recommended-agent-stack)).
+- ❌ **No new database tech** — Postgres + Redis (already in the stack) cover everything; no Mongo/Kafka/ClickHouse yet.
+- ❌ **No microservices / event bus / message queue** at this scale — a monolith + worker is simpler and more reliable.
+- ❌ **No LLM placing or sizing trades — ever** (capital risk + hallucination).
+
+### 0.5 🧑‍🔧 You (operator) prerequisites
+
+- Comfortable (or willing) with **basic Docker / Linux** for the VPS — or stay on Railway and skip it.
+- **Discipline to validate paper → shadow → small-live** before full live (weeks, not hours).
+- A **funded exchange account only when going live** (paper needs none).
 
 ---
 
