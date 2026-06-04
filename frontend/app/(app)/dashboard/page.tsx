@@ -1432,6 +1432,8 @@ function BotExplainer({ bot }: { bot?: BotCfg }) {
   const points: { icon: string; title: string; body: string }[] = [
     { icon: '🤖', title: 'What it is',
       body: 'An automated trading assistant for your own Binance USDT-M Futures account. Every ~60 seconds it checks your watchlist and trades only high-quality setups for you — using your own encrypted API keys, fully isolated from other users.' },
+    { icon: '🧮', title: 'Bot type & model',
+      body: 'A deterministic, RULE-BASED algorithmic bot — not a chatbot or black-box AI. It runs server-side as one isolated instance per user, ticking every ~60s. The “model” is a transparent technical-analysis scoring engine (EMA/VWAP trend, RSI pullback, MACD, ADX, ATR, volume, multi-timeframe agreement, market structure) that grades each coin 0–100 and applies hard safety gates. No LLM or neural network places trades — so every decision is explainable and repeatable, and the “AI” features (strategy selector, trade plan, news read) are rule-based heuristics, not generated text.' },
     { icon: '🎯', title: 'How it picks a trade',
       body: 'It scores each coin 0–100 on a 19-point checklist (trend, EMA alignment, RSI pullback, MACD, volume, ADX, multi-timeframe agreement, market structure, patterns…). A trade opens only when there is a clear direction, the score is ≥ your threshold, AND every safety gate passes.' },
     { icon: '🛡️', title: 'Safety gates (all must pass)',
