@@ -250,6 +250,46 @@ export default function Dashboard() {
           <Card label="Volume" value={fmt(d.volume)} />
         </section>
 
+        {/* Top Opportunity (2/3) + Next Trade Preview (1/3) — directly under the KPI rows */}
+        <section className="grid md:grid-cols-3 gap-6">
+          <div className="card md:col-span-2">
+            <p className="label mb-2">🎯 Top Opportunity — Live</p>
+            {!d.top ? <Empty>No directional candidate right now — bot is standing aside.</Empty> : (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-2xl font-bold">{d.top.symbol}{' '}
+                    <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span>
+                  </p>
+                  <p className="text-muted text-sm mt-1">
+                    Score <b className="text-accent">{d.top.score}</b>/100 · threshold {d.top.threshold} ·{' '}
+                    {d.top.allPass ? <span className="badge-up">✅ would trade</span> : (
+                      <GateDetail s={d.top} botStatus={bot?.status}><span className="text-warn">⏳ {d.top.blocking}</span></GateDetail>
+                    )}
+                  </p>
+                </div>
+                <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
+              </div>
+            )}
+          </div>
+          <div className="card">
+            <p className="label mb-2">Next Trade Preview</p>
+            {!d.top ? <Empty>No candidate yet</Empty> : (
+              <div className="text-sm space-y-1">
+                <p className="text-lg font-bold">{d.top.symbol} <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span></p>
+                <Row k="Score" v={<b className="text-accent">{d.top.score}/{d.top.threshold}</b>} />
+                <Row k="Leverage" v={`${bot?.leverage ?? '—'}×`} />
+                <Row k="Margin" v={`$${bot ? num(bot.marginPerTradeUsd).toFixed(2) : '—'}`} />
+                <Row k="Status" v={
+                  <GateDetail s={d.top} botStatus={bot?.status}>
+                    {d.top.allPass ? <span className="badge-up">READY ⓘ</span> : <span className="text-warn">GATED ⓘ</span>}
+                  </GateDetail>
+                } />
+                <a href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</a>
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Account & Trade Detail — current settings (kept at top with the KPIs) */}
         <section className="card">
           <p className="label mb-2">⚙️ Account &amp; Trade Detail — current settings</p>
@@ -347,46 +387,6 @@ export default function Dashboard() {
                 </tr>))}</tbody>
             </table>
           )}
-        </section>
-
-        {/* Top Opportunity (2/3) + Next Trade Preview (1/3) */}
-        <section className="grid md:grid-cols-3 gap-6">
-          <div className="card md:col-span-2">
-            <p className="label mb-2">🎯 Top Opportunity — Live</p>
-            {!d.top ? <Empty>No directional candidate right now — bot is standing aside.</Empty> : (
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-2xl font-bold">{d.top.symbol}{' '}
-                    <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span>
-                  </p>
-                  <p className="text-muted text-sm mt-1">
-                    Score <b className="text-accent">{d.top.score}</b>/100 · threshold {d.top.threshold} ·{' '}
-                    {d.top.allPass ? <span className="badge-up">✅ would trade</span> : (
-                      <GateDetail s={d.top} botStatus={bot?.status}><span className="text-warn">⏳ {d.top.blocking}</span></GateDetail>
-                    )}
-                  </p>
-                </div>
-                <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
-              </div>
-            )}
-          </div>
-          <div className="card">
-            <p className="label mb-2">Next Trade Preview</p>
-            {!d.top ? <Empty>No candidate yet</Empty> : (
-              <div className="text-sm space-y-1">
-                <p className="text-lg font-bold">{d.top.symbol} <span className={d.top.bias === 'long' ? 'badge-up' : 'badge-down'}>{d.top.bias.toUpperCase()}</span></p>
-                <Row k="Score" v={<b className="text-accent">{d.top.score}/{d.top.threshold}</b>} />
-                <Row k="Leverage" v={`${bot?.leverage ?? '—'}×`} />
-                <Row k="Margin" v={`$${bot ? num(bot.marginPerTradeUsd).toFixed(2) : '—'}`} />
-                <Row k="Status" v={
-                  <GateDetail s={d.top} botStatus={bot?.status}>
-                    {d.top.allPass ? <span className="badge-up">READY ⓘ</span> : <span className="text-warn">GATED ⓘ</span>}
-                  </GateDetail>
-                } />
-                <a href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</a>
-              </div>
-            )}
-          </div>
         </section>
 
         {/* ═══════════════ BELOW — summaries, charts, history & settings ═══════════════ */}
