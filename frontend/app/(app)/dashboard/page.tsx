@@ -100,10 +100,17 @@ export default function Dashboard() {
   const [bpnl, setBpnl] = useState<BinancePnl>();
 
   const loadSignals = useCallback(async () => {
-    setSignals(await api.get<SignalRow[]>('/api/trading/signals').catch(() => []));
+    // Keep the LAST good signals when a refresh fails or returns nothing — so the
+    // Live Signals / Top Opportunity / Next Trade cards update in place and never
+    // blank back to "Computing…" on a transient hiccup (network / auth refresh /
+    // rate-limit). signalsOverview always returns ≥1 row, so [] only means failure.
+    const next = await api.get<SignalRow[]>('/api/trading/signals').catch(() => null);
+    if (next && next.length) setSignals(next);
   }, []);
   const loadIntel = useCallback(async () => {
-    setIntel(await api.get<Intel>('/api/trading/intelligence').catch(() => undefined));
+    // Same: keep the last Intel on a failed refresh instead of blanking the card.
+    const next = await api.get<Intel>('/api/trading/intelligence').catch(() => null);
+    if (next) setIntel(next);
   }, []);
 
   const load = useCallback(async () => {
