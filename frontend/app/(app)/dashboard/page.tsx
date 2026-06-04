@@ -37,7 +37,7 @@ interface Usage {
   trialEndsAt: string | null; inTrial: boolean; canTrade: boolean; viewOnly: boolean;
   unlimited?: boolean; unlimitedTrades?: boolean; billingInterval?: string; planPriceUsd?: number; renewalDate?: string | null;
 }
-interface Market { btcTrend: string; verdict: string; fearGreed: { value: number; label: string }; btcAtrPct: number; btcPrice?: number; }
+interface Market { btcTrend: string; verdict: string; fearGreed: { value: number; label: string }; fearGreedCmc?: { value: number; label: string } | null; btcAtrPct: number; btcPrice?: number; }
 interface Trade {
   id: string; symbol: string; side: string; entryPrice: string; exitPrice: string; quantity: string;
   leverage: number; grossPnl: string; feeUsd: string; netPnl: string; rr: string | null;
@@ -55,7 +55,7 @@ interface Intel {
     avoid: string[]; reason: string;
     library: { total: number; implemented: number; byCategory: Record<string, number> };
   };
-  fearGreed: { value: number; label: string; history: { value: number; label: string; date: string }[]; recommendation: string };
+  fearGreed: { value: number; label: string; cmc?: { value: number; label: string } | null; history: { value: number; label: string; date: string }[]; recommendation: string };
   learning: {
     totalTrades: number; winRate: number; profitFactor: number;
     byReason: Record<string, { count: number; pnl: number }>;
@@ -388,6 +388,9 @@ export default function Dashboard() {
                 <Row k="BTC Trend" v={<span className={trendColor(market.btcTrend)}>{market.btcTrend}</span>} />
                 <Row k="Verdict" v={<span className={market.verdict === 'HIGH_RISK' ? 'badge-down' : market.verdict === 'SAFE' ? 'badge-up' : 'text-warn'}>{market.verdict}</span>} />
                 <Row k="Fear & Greed" v={`${market.fearGreed.value} · ${market.fearGreed.label}`} />
+                {market.fearGreedCmc && (
+                  <Row k="↳ CoinMarketCap" v={`${market.fearGreedCmc.value} · ${market.fearGreedCmc.label}`} />
+                )}
                 <Row k="BTC ATR" v={`${(market.btcAtrPct * 100).toFixed(2)}%`} />
                 <Row k="Consecutive losses" v={String(bot?.consecutiveLosses ?? 0)} />
               </div>
@@ -1124,6 +1127,10 @@ function IntelSection({ intel }: { intel?: Intel }) {
           <div className="text-center">
             <p className={`text-4xl font-bold ${fgCls}`}>{fg.value}</p>
             <p className={`text-sm ${fgCls}`}>{fg.label}</p>
+            <p className="text-muted text-[11px] mt-0.5">alternative.me · drives the bot</p>
+            {fg.cmc && (
+              <p className="text-muted text-xs mt-1">CoinMarketCap: <span className="font-semibold">{fg.cmc.value}</span> · {fg.cmc.label}</p>
+            )}
           </div>
           {fg.history.length > 1 && (
             <ResponsiveContainer width="100%" height={56}>

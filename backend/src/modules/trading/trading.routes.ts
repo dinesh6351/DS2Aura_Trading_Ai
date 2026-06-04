@@ -96,7 +96,7 @@ tradingRouter.get('/intelligence', asyncHandler(async (req, res) => {
     : fg.value <= 55 ? 'Neutral — let the active strategy decide.'
     : fg.value <= 75 ? 'Greed — trail stops tightly, do not chase extended moves.'
     : 'Extreme greed — high reversal risk; protect profits, reduce exposure.';
-  return ok(res, { strategy, fearGreed: { value: fg.value, label: fg.label, history: fgHistory, recommendation: fgRec }, learning, marketIntel: intel });
+  return ok(res, { strategy, fearGreed: { value: fg.value, label: fg.label, cmc: market.fearGreedCmc, history: fgHistory, recommendation: fgRec }, learning, marketIntel: intel });
 }));
 
 // ── Watchlist ─────────────────────────────────────────────────────────────────
