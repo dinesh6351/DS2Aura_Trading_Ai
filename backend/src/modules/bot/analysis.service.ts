@@ -255,6 +255,10 @@ export interface SignalRow {
   ema8: number | null; rsi3: number | null; rsi14: number | null; volRatio: number | null;
   vwapDeltaPct: number | null; atrPct: number | null; adx: number | null; macdHist: number | null;
   trend: 'up' | 'down' | 'mixed' | 'n/a'; blocking: string;
+  // Full gating breakdown so the dashboard can explain EXACTLY why a trade is held:
+  criticalFails: string[];                              // hard blocks — ANY one vetoes the trade regardless of score
+  weakConditions: { label: string; weight: number }[]; // active non-critical checks that are failing (drag the score down)
+  earnedWeight: number; totalWeight: number;            // score = earned / total × 100
 }
 const _signalsCache = new Map<string, { at: number; data: SignalRow[]; refreshing?: boolean }>();
 
@@ -273,18 +277,27 @@ async function computeSignals(symbols: string[], cfg: BotConfig | null, market: 
           symbol, bias: 'none', score: 0, threshold: cfg?.scoreThreshold ?? 85, allPass: false,
           ema8: null, rsi3: null, rsi14: null, volRatio: null, vwapDeltaPct: null,
           atrPct: null, adx: null, macdHist: null, trend: 'n/a', blocking: 'No market data yet',
+          criticalFails: [], weakConditions: [], earnedWeight: 0, totalWeight: 0,
         };
       }
       const s = sig.snap;
       const trend = s.ema8 > s.ema20 && s.ema20 > s.ema50 ? 'up'
         : s.ema8 < s.ema20 && s.ema20 < s.ema50 ? 'down' : 'mixed';
-      const topFail = [...sig.conditions].filter((c) => c.active && !c.pass && !c.critical).sort((a, b) => b.weight - a.weight)[0];
+      // Active, non-critical checks that are failing — sorted by weight so the biggest
+      // score-drains come first. These are what's keeping the score below the bar.
+      const weakConditions = [...sig.conditions]
+        .filter((c) => c.active && !c.pass && !c.critical)
+        .sort((a, b) => b.weight - a.weight)
+        .map((c) => ({ label: c.label, weight: c.weight }));
+      const topFail = weakConditions[0];
       const blocking = sig.bias === 'none' ? 'No directional bias (price between VWAP/EMA8)'
         : sig.criticalFails[0] ?? (sig.allPass ? '— would trade' : topFail?.label ?? 'Below score threshold');
       return {
         symbol, bias: sig.bias, score: sig.score, threshold: sig.threshold, allPass: sig.allPass,
         ema8: s.ema8, rsi3: s.rsi3, rsi14: s.rsi14, volRatio: s.volRatio, vwapDeltaPct: s.distFromVwapPct,
         atrPct: s.atrPct, adx: s.adx, macdHist: s.macdHist, trend, blocking,
+        criticalFails: sig.criticalFails, weakConditions,
+        earnedWeight: sig.earnedWeight, totalWeight: sig.totalWeight,
       };
     }));
     for (const r of part) rows.push(r);

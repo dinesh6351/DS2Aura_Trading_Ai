@@ -29,6 +29,8 @@ interface SignalRow {
   ema8: number | null; rsi3: number | null; rsi14: number | null; volRatio: number | null;
   vwapDeltaPct: number | null; atrPct: number | null; adx: number | null; macdHist: number | null;
   trend: 'up' | 'down' | 'mixed' | 'n/a'; blocking: string;
+  criticalFails?: string[]; weakConditions?: { label: string; weight: number }[];
+  earnedWeight?: number; totalWeight?: number;
 }
 interface Usage {
   plan: string; status: string; tradesUsed: number; includedTrades: number;
@@ -352,7 +354,9 @@ export default function Dashboard() {
                   </p>
                   <p className="text-muted text-sm mt-1">
                     Score <b className="text-accent">{d.top.score}</b>/100 · threshold {d.top.threshold} ·{' '}
-                    {d.top.allPass ? <span className="badge-up">✅ would trade</span> : <span className="text-warn">⏳ {d.top.blocking}</span>}
+                    {d.top.allPass ? <span className="badge-up">✅ would trade</span> : (
+                      <GateDetail s={d.top} botStatus={bot?.status}><span className="text-warn">⏳ {d.top.blocking}</span></GateDetail>
+                    )}
                   </p>
                 </div>
                 <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
@@ -367,7 +371,11 @@ export default function Dashboard() {
                 <Row k="Score" v={<b className="text-accent">{d.top.score}/{d.top.threshold}</b>} />
                 <Row k="Leverage" v={`${bot?.leverage ?? '—'}×`} />
                 <Row k="Margin" v={`$${bot ? num(bot.marginPerTradeUsd).toFixed(2) : '—'}`} />
-                <Row k="Status" v={d.top.allPass ? <span className="badge-up">READY</span> : <span className="text-warn">GATED</span>} />
+                <Row k="Status" v={
+                  <GateDetail s={d.top} botStatus={bot?.status}>
+                    {d.top.allPass ? <span className="badge-up">READY ⓘ</span> : <span className="text-warn">GATED ⓘ</span>}
+                  </GateDetail>
+                } />
                 <a href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</a>
               </div>
             )}
@@ -1319,6 +1327,87 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return <div className="flex justify-between"><span className="text-muted">{k}</span><span>{v}</span></div>;
 }
 function Empty({ children }: { children: React.ReactNode }) { return <p className="text-muted text-sm py-6 text-center">{children}</p>; }
+
+/** Plain-English meaning of each CRITICAL safety gate, so the hover detail says
+ *  exactly WHAT is blocking — not just the gate's terse name. */
+function gateHelp(label: string): string {
+  if (label.includes('HIGH_RISK')) return 'Market is HIGH_RISK (extreme Fear & Greed, or high BTC volatility) — the bot stands aside until it calms.';
+  if (label.includes('alt-long')) return 'BTC is bearish, so every LONG alt setup is blocked — only shorts can fire.';
+  if (label.includes('alt-short')) return 'BTC is bullish, so every SHORT alt setup is blocked — only longs can fire.';
+  if (label.startsWith('ADX')) return 'ADX is below the trend threshold — the market is chopping sideways, not trending.';
+  if (label.startsWith('Spread')) return 'The bid/ask spread is too wide right now — an entry would lose too much to slippage.';
+  if (label.startsWith('Funding')) return 'Funding rate is too high — positioning is crowded; the bot avoids paying it.';
+  return '';
+}
+
+/** Wraps a READY/GATED status and reveals, on hover/focus, the COMPLETE reason a
+ *  trade is (or isn't) held: bot state, hard critical blocks, the score gap, and
+ *  every weighted check dragging the score down. */
+function GateDetail({ s, botStatus, children }: { s: SignalRow; botStatus?: string; children: React.ReactNode }) {
+  const crit = s.criticalFails ?? [];
+  const weak = s.weakConditions ?? [];
+  const gap = s.threshold - s.score;
+  const notRunning = !!botStatus && botStatus !== 'RUNNING';
+  return (
+    <span className="relative inline-block group align-middle" tabIndex={0}>
+      <span className="cursor-help underline decoration-dotted underline-offset-2">{children}</span>
+      <div className="invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100
+                      transition-opacity absolute right-0 z-50 mt-1 w-72 max-w-[18rem] rounded-lg border border-border bg-surface
+                      shadow-card p-3 text-left text-xs leading-snug font-normal text-fg whitespace-normal space-y-2">
+        <p className="font-semibold">{s.allPass ? '✅ Why this would trade' : '🚫 Why this trade is held'}</p>
+
+        {notRunning && (
+          <p className="text-warn">⏸ Bot is {botStatus!.toLowerCase()} — signals are computed but no order fires until you press Start.</p>
+        )}
+
+        {s.allPass ? (
+          <p className="text-muted">All safety gates pass and the score clears the bar. It opens on the next 60-second tick (margin &amp; daily-cap permitting).</p>
+        ) : (
+          <>
+            {s.bias === 'none' && (
+              <p>• <b>No direction</b> — price sits between VWAP and EMA8, so neither a long nor a short qualifies yet.</p>
+            )}
+
+            {crit.length > 0 && (
+              <div>
+                <p className="text-danger font-medium">Hard blocks — any one stops the trade:</p>
+                <ul className="mt-1 space-y-1">
+                  {crit.map((c) => (
+                    <li key={c}>✗ <b>{c}</b>{gateHelp(c) && <span className="text-muted"> — {gateHelp(c)}</span>}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p>
+              <b>Score {s.score}/{s.threshold}</b>{' '}
+              {gap > 0 ? <span className="text-warn">— {gap} below the quality bar</span> : <span className="text-accent">— clears the bar</span>}
+              {typeof s.earnedWeight === 'number' && typeof s.totalWeight === 'number' && s.totalWeight > 0 && (
+                <span className="text-muted"> ({s.earnedWeight}/{s.totalWeight} pts)</span>
+              )}
+            </p>
+
+            {weak.length > 0 && (
+              <div>
+                <p className="text-muted font-medium">Weighing the score down:</p>
+                <ul className="mt-1 space-y-0.5">
+                  {weak.slice(0, 7).map((w) => (
+                    <li key={w.label}>✗ {w.label} <span className="text-muted">(−{w.weight})</span></li>
+                  ))}
+                  {weak.length > 7 && <li className="text-muted">+{weak.length - 7} more…</li>}
+                </ul>
+              </div>
+            )}
+
+            {crit.length === 0 && weak.length === 0 && s.bias !== 'none' && (
+              <p className="text-muted">{s.blocking}</p>
+            )}
+          </>
+        )}
+      </div>
+    </span>
+  );
+}
 function fmt(n?: number) { return n == null ? '…' : `$${n.toFixed(2)}`; }
 
 /**
