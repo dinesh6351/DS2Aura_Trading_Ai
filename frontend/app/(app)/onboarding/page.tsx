@@ -19,6 +19,7 @@ export default function OnboardingPage() {
   const [mode, setMode] = useState<TradingMode>(TradingMode.BALANCED);
   const [warning, setWarning] = useState('');
   const [error, setError] = useState('');
+  const [skippedKey, setSkippedKey] = useState(false);
 
   async function connect() {
     setError('');
@@ -27,6 +28,10 @@ export default function OnboardingPage() {
       if (r.warning) setWarning(r.warning);
       setStep(3);
     } catch (e) { setError((e as Error).message); }
+  }
+  function skipConnect() {
+    setSkippedKey(true);
+    setStep(3);
   }
   async function chooseMode() { await api.post('/api/bot/mode', { mode }); setStep(4); }
   async function activate() { await api.post('/api/bot/start'); router.push('/dashboard'); }
@@ -51,11 +56,12 @@ export default function OnboardingPage() {
         {step === 2 && (
           <div className="space-y-3">
             <p className="label">Connect Binance Futures (trade-only, no withdrawals)</p>
-            <input className="input" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-            <input className="input" placeholder="Secret Key" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+            <input className="input" placeholder="API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} suppressHydrationWarning />
+            <input className="input" placeholder="Secret Key" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} suppressHydrationWarning />
             <p className="text-xs text-muted">Keys are validated against Binance then stored encrypted (AES-256). We never request withdrawal permission.</p>
             {error && <p className="text-danger text-sm">{error}</p>}
             <button className="btn w-full" onClick={connect}>Validate &amp; connect</button>
+            <button className="btn-outline w-full" onClick={skipConnect}>Skip for now</button>
           </div>
         )}
 
@@ -81,8 +87,17 @@ export default function OnboardingPage() {
 
         {step === 4 && (
           <div className="space-y-3">
-            <p className="text-sm text-muted">You&apos;re ready. Activate the bot to start trading your account.</p>
-            <button className="btn w-full" onClick={activate}>Activate bot <ArrowRight size={16} /></button>
+            {skippedKey ? (
+              <>
+                <p className="text-sm text-muted">You&apos;re ready. You can connect your Binance account later in settings.</p>
+                <button className="btn w-full" onClick={() => router.push('/dashboard')}>Go to dashboard <ArrowRight size={16} /></button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted">You&apos;re ready. Activate the bot to start trading your account.</p>
+                <button className="btn w-full" onClick={activate}>Activate bot <ArrowRight size={16} /></button>
+              </>
+            )}
           </div>
         )}
       </div>

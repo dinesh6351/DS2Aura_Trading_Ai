@@ -41,10 +41,10 @@ export default function LoginPage() {
           <p className="text-sm text-muted">Sign in to your account</p>
         </div>
         <div className="space-y-3">
-          <input className="input" placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <input className="input" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input className="input" placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required suppressHydrationWarning />
+          <input className="input" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required suppressHydrationWarning />
           {needs2fa && (
-            <input className="input" placeholder="2FA code" value={totp} onChange={(e) => setTotp(e.target.value)} />
+            <input className="input" placeholder="2FA code" value={totp} onChange={(e) => setTotp(e.target.value)} suppressHydrationWarning />
           )}
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}

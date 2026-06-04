@@ -205,8 +205,8 @@ function FeedbackSection({ email }: { email?: string }) {
       ) : (
         <form onSubmit={submit} className="card space-y-3">
           <div className="grid sm:grid-cols-2 gap-3">
-            <input className="input" placeholder="Your name" value={form.name} onChange={set('name')} required />
-            <input className="input" placeholder="Your email" type="email" value={form.email} onChange={set('email')} required />
+            <input className="input" placeholder="Your name" value={form.name} onChange={set('name')} required suppressHydrationWarning />
+            <input className="input" placeholder="Your email" type="email" value={form.email} onChange={set('email')} required suppressHydrationWarning />
           </div>
           <textarea className="input min-h-28" placeholder="Your message…" value={form.message} onChange={set('message')} required />
           {err && <p className="text-danger text-sm">{err}</p>}

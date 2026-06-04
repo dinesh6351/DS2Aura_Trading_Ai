@@ -44,14 +44,14 @@ export default function RegisterPage() {
         <div className="space-y-3">
           {FIELDS.map((f) => (
             <input key={f.k} className="input" placeholder={f.label} type={f.type ?? 'text'}
-              value={form[f.k]} onChange={set(f.k)} required={f.required} />
+              value={form[f.k]} onChange={set(f.k)} required={f.required} suppressHydrationWarning />
           ))}
           <select className="select" value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })} required>
             <option value="">Select your country…</option>
             {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <input className="input" placeholder="Password" type="password" value={form.password} onChange={set('password')} required />
+          <input className="input" placeholder="Password" type="password" value={form.password} onChange={set('password')} required suppressHydrationWarning />
         </div>
         {error && <p className="text-danger text-sm">{error}</p>}
         <button className="btn w-full" disabled={loading}>{loading ? 'Creating…' : 'Create account'}</button>
