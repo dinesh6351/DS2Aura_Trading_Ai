@@ -6,6 +6,8 @@ the platform earns a $10/month subscription (150 trades included, then $0.10/ext
 
 > ⚠️ Real-money system. Every user trades their own live Binance account. Treat encryption keys,
 > JWT secrets and the database as production secrets from day one.
+>
+> 🗂️ **Full plan & company roadmap:** [`docs/README.md`](docs/README.md) — master index + end-to-end setup (tech + product + company + legal).
 
 ---
 
