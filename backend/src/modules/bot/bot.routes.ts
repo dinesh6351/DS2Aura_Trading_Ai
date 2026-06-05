@@ -133,6 +133,14 @@ botRouter.patch('/config', asyncHandler(async (req, res) => {
   if (patch.paperTrading !== undefined) {
     const open = await prisma.position.count({ where: { userId, status: 'OPEN' } });
     if (open > 0) throw Errors.badRequest('Close all open positions before switching between Paper and Live trading.');
+    
+    // Explicit permission check for Live Trading
+    if (patch.paperTrading === false) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user && user.role !== 'ADMIN' && !user.canLiveTrade) {
+        throw Errors.forbidden('Live Trading is only available to Admins or users who have been granted access.');
+      }
+    }
   }
   const cfg = await prisma.botConfig.update({ where: { userId }, data: patch });
   await prisma.auditLog.create({ data: { userId, action: 'BOT_CONFIG_CHANGE', metadata: patch } });

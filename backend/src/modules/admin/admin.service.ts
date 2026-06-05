@@ -51,6 +51,7 @@ export const adminService = {
     ]);
     return { total, users: rows.map((u) => ({
       id: u.id, email: u.email, role: u.role, status: u.status,
+      canLiveTrade: u.canLiveTrade,
       fullName: u.profile?.fullName, country: u.profile?.country,
       botStatus: u.botConfig?.status,
       plan: u.subscription?.plan, subStatus: u.subscription?.status,
@@ -59,6 +60,16 @@ export const adminService = {
       openPositions: u._count.positions, totalTrades: u._count.trades,
       createdAt: u.createdAt,
     })) };
+  },
+
+  async setLiveTradingAccess(adminId: string, userId: string, canLiveTrade: boolean) {
+    const user = await prisma.user.update({ where: { id: userId }, data: { canLiveTrade } });
+    if (!canLiveTrade) {
+      // If revoking access, also force paperTrading ON to protect them
+      await prisma.botConfig.updateMany({ where: { userId }, data: { paperTrading: true } }).catch(() => {});
+    }
+    await adminLog(adminId, userId, 'SET_LIVE_TRADING', undefined, { canLiveTrade });
+    return { id: user.id, canLiveTrade: user.canLiveTrade };
   },
 
   /** Top / worst traders by net profit. */

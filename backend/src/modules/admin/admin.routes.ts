@@ -74,6 +74,12 @@ adminRouter.post('/users/:id/role', requireRole(Role.ADMIN), asyncHandler(async 
   return ok(res, await adminService.setUserRole(adminId(req), req.params.id!, role, reason));
 }));
 
+/** Grant or revoke Live Trading access for a specific user. */
+adminRouter.post('/users/:id/live-trading', requireRole(Role.ADMIN), asyncHandler(async (req, res) => {
+  const { canLiveTrade } = z.object({ canLiveTrade: z.boolean() }).parse(req.body);
+  return ok(res, await adminService.setLiveTradingAccess(adminId(req), req.params.id!, canLiveTrade));
+}));
+
 /** Permanently delete a user and all their data. */
 adminRouter.delete('/users/:id', requireRole(Role.ADMIN), asyncHandler(async (req, res) => {
   const reason = (req.query.reason as string | undefined);

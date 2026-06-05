@@ -19,6 +19,7 @@ usersRouter.get('/me', asyncHandler(async (req, res) => {
   return ok(res, {
     id: user.id, email: user.email, role: user.role, status: user.status,
     twoFactorEnabled: user.twoFactorEnabled, emailVerified: !!user.emailVerifiedAt,
+    canLiveTrade: user.canLiveTrade,
     profile: user.profile, subscription: user.subscription, botConfig: user.botConfig,
   });
 }));

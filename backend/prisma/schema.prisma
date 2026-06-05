@@ -122,6 +122,7 @@ model User {
   emailVerifiedAt  DateTime?
   twoFactorEnabled Boolean    @default(false)
   twoFactorSecret  String? // encrypted TOTP secret
+  canLiveTrade     Boolean    @default(false)
   supabaseUserId   String?    @unique // link to Supabase Auth if used
   lastLoginAt      DateTime?
   createdAt        DateTime   @default(now())

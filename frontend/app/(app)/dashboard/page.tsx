@@ -8,7 +8,9 @@ import {
 import { api, ensureSession, openRealtime, getApiBase } from '@/lib/api';
 import { CHANNELS, BILLING, centsToUsd, PROFIT_TAKE_CAP, TAKER_FEE_RATE, regionLabel } from '@platform/shared';
 import { AppNav } from '@/components/AppNav';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { useTheme, themeColors } from '@/lib/theme';
+import { LayoutDashboard, TrendingUp, ShieldCheck, Activity, BarChart2, DollarSign, Target, Briefcase, Zap, AlertTriangle, Info, Play, Pause, Square } from 'lucide-react';
 
 /** recharts tooltip styling that follows the active theme. */
 const tip = (c: ReturnType<typeof themeColors>) => ({ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8, fontSize: 12, color: c.fg });
@@ -93,7 +95,7 @@ export default function Dashboard() {
   const [perf, setPerf] = useState<Perf[]>([]);
   const [log, setLog] = useState<LogItem[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
-  const [me, setMe] = useState<{ id: string } | null>(null);
+  const [me, setMe] = useState<{ id: string; role: string; canLiveTrade: boolean } | null>(null);
   const [detail, setDetail] = useState<{ symbol: string; trips: Trip[] } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [lastLoad, setLastLoad] = useState(Date.now());
@@ -137,13 +139,23 @@ export default function Dashboard() {
   }, []);
 
   async function subscribe(plan: 'BASIC' | 'PRO' = 'BASIC') { await api.post('/api/billing/subscribe', { plan }); await load(); }
-  async function botAction(action: 'start' | 'pause' | 'stop') { await api.post(`/api/bot/${action}`).catch((e) => alert((e as Error).message)); await load(); }
+  
+  async function botAction(action: 'start' | 'pause' | 'stop') { 
+    await api.post(`/api/bot/${action}`).catch((e) => alert((e as Error).message)); 
+    await load(); 
+  }
+
+  const [paperConfirmOpen, setPaperConfirmOpen] = useState(false);
+  const [paperConfirmBusy, setPaperConfirmBusy] = useState(false);
+
   async function setPaperMode(paper: boolean) {
     if (paper === bot?.paperTrading) return; // already in that mode
-    // Real funds at stake → confirm before going Live. Paper is safe, no prompt.
-    if (!paper && !confirm('Switch to LIVE trading? New trades will use REAL funds on your connected Binance account.')) return;
-    try { await api.patch('/api/bot/config', { paperTrading: paper }); await load(); }
-    catch (e) { alert((e as Error).message); } // e.g. "Close all open positions before switching…"
+    if (!paper) {
+      setPaperConfirmOpen(true);
+      return;
+    }
+    try { await api.patch('/api/bot/config', { paperTrading: true }); await load(); }
+    catch (e) { alert((e as Error).message); }
   }
   async function openDetail(symbol: string) { const trips = await api.get<Trip[]>(`/api/trading/trade-detail?symbol=${symbol}`); setDetail({ symbol, trips }); }
   async function refreshAll() { setRefreshing(true); try { await Promise.all([load(), loadSignals()]); } finally { setRefreshing(false); } }
@@ -160,7 +172,7 @@ export default function Dashboard() {
         loadIntel();
       }
     });
-    api.get<{ id: string }>('/api/me').then((m) => { if (alive) setMe(m); }).catch(() => {});
+    api.get<{ id: string; role: string; canLiveTrade: boolean }>('/api/me').then((m) => { if (alive) setMe(m); }).catch(() => {});
     return () => { alive = false; };
   }, [load, loadSignals, loadIntel]);
 
@@ -195,28 +207,76 @@ export default function Dashboard() {
   return (
     <>
       <AppNav active="dashboard" />
-      <main className="p-3 sm:p-4 md:p-6 space-y-4 md:space-y-6 max-w-7xl mx-auto">
+      
+      <ConfirmModal 
+        isOpen={paperConfirmOpen}
+        title="Switch to LIVE Trading?"
+        message={<>You are about to switch from simulated paper trading to <b className="text-danger">LIVE trading</b>. New trades will use <b className="text-danger">REAL funds</b> from your connected Binance account.<br/><br/>Are you sure you want to proceed?</>}
+        confirmText="Yes, switch to LIVE"
+        danger={true}
+        isLoading={paperConfirmBusy}
+        onCancel={() => setPaperConfirmOpen(false)}
+        onConfirm={() => {
+          setPaperConfirmBusy(true);
+          api.patch('/api/bot/config', { paperTrading: false })
+            .then(() => { setPaperConfirmOpen(false); load(); })
+            .catch((e) => alert((e as Error).message))
+            .finally(() => setPaperConfirmBusy(false));
+        }}
+      />
+
+      <main className="p-4 sm:p-6 md:p-8 space-y-6 md:space-y-8 max-w-[90rem] mx-auto">
         {/* Header + bot controls */}
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-xl font-semibold tracking-tight">Trading Terminal</h1>
-            {market && <span className="text-muted text-sm">BTC <b className={trendColor(market.btcTrend)}>{market.btcTrend}</b>{market.btcPrice ? ` $${market.btcPrice.toLocaleString()}` : ''}</span>}
-            <span className="text-xs flex items-center gap-1">
-              <span className={account?.live ? 'badge-up animate-pulse' : 'text-warn'}>{account?.live ? '● LIVE' : '○ cached'}</span>
-              <span className="text-muted">· auto 20s · updated <Ago at={lastLoad} /></span>
-              {stats?.timezone && <span className="text-muted">· 🌐 {regionLabel(stats.timezone)}{stats.lastResetAt ? ` · day reset ${new Date(stats.lastResetAt).toLocaleString()}` : ''}</span>}
-            </span>
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-surface/40 backdrop-blur-md border border-white/10 p-5 sm:p-6 rounded-3xl shadow-sm">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-fg flex items-center gap-3">
+              <LayoutDashboard className="text-accent" size={28} /> Trading Terminal
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted font-medium">
+              {market && <span className="flex items-center gap-1 bg-surface2/50 px-2.5 py-1 rounded-lg">BTC <b className={trendColor(market.btcTrend)}>{market.btcTrend}</b>{market.btcPrice ? ` $${market.btcPrice.toLocaleString()}` : ''}</span>}
+              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${account?.live ? 'bg-accent/10 text-accent' : 'bg-warn/10 text-warn'}`}>
+                <div className={`w-2 h-2 rounded-full ${account?.live ? 'bg-accent animate-pulse' : 'bg-warn'}`}></div>
+                {account?.live ? 'LIVE' : 'CACHED'}
+              </span>
+              <span className="px-2.5 py-1 bg-surface2/50 rounded-lg">auto 20s · updated <Ago at={lastLoad} /></span>
+              {stats?.timezone && <span className="px-2.5 py-1 bg-surface2/50 rounded-lg hidden sm:inline-block">🌐 {regionLabel(stats.timezone)}</span>}
+            </div>
           </div>
-          <div className="flex items-center flex-wrap gap-2 justify-end">
-            <ModeToggle paper={bot?.paperTrading} onSet={setPaperMode} />
-            <button className="btn text-xs" disabled={refreshing} onClick={refreshAll}>{refreshing ? '…' : '↻ Refresh'}</button>
-            <span className={`label ${bot?.status === 'RUNNING' ? 'text-accent' : 'text-muted'}`}>BOT: {bot?.status ?? '…'} · {bot?.mode}</span>
-            <button className="btn" onClick={() => botAction('start')}>Start</button>
-            <button className="btn" onClick={() => botAction('pause')}>Pause</button>
-            <button className="btn-danger" onClick={() => botAction('stop')}>Stop</button>
+          
+          <div className="flex items-center flex-wrap gap-3">
+            {(me?.role === 'ADMIN' || me?.canLiveTrade) && (
+              <ModeToggle paper={bot?.paperTrading} onSet={setPaperMode} />
+            )}
+            <button className="btn-ghost text-xs" disabled={refreshing} onClick={refreshAll}>{refreshing ? '…' : '↻ Refresh'}</button>
+            
+            <div className="flex items-center gap-2 bg-surface/80 border border-white/5 shadow-sm p-1.5 rounded-2xl">
+              <div className="px-4 py-1.5 flex flex-col justify-center">
+                <span className="text-[10px] uppercase tracking-widest text-muted font-bold leading-none mb-1">Bot Status</span>
+                <span className={`text-sm font-black leading-none ${bot?.status === 'RUNNING' ? 'text-accent' : 'text-fg'}`}>{bot?.status ?? '…'} · {bot?.mode}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <button className={`p-2.5 rounded-xl transition-all ${bot?.status === 'RUNNING' ? 'bg-accent/20 text-accent cursor-default' : 'bg-surface2 hover:bg-accent hover:text-white text-fg'}`} onClick={() => bot?.status !== 'RUNNING' && botAction('start')} title="Start">
+                  <Play fill="currentColor" size={16} />
+                </button>
+                <button className={`p-2.5 rounded-xl transition-all ${bot?.status === 'PAUSED' ? 'bg-warn/20 text-warn cursor-default' : 'bg-surface2 hover:bg-warn hover:text-white text-fg'}`} onClick={() => bot?.status !== 'PAUSED' && botAction('pause')} title="Pause">
+                  <Pause fill="currentColor" size={16} />
+                </button>
+                <button className={`p-2.5 rounded-xl transition-all ${bot?.status === 'STOPPED' ? 'bg-danger/20 text-danger cursor-default' : 'bg-surface2 hover:bg-danger hover:text-white text-fg'}`} onClick={() => bot?.status !== 'STOPPED' && botAction('stop')} title="Stop">
+                  <Square fill="currentColor" size={16} />
+                </button>
+              </div>
+            </div>
           </div>
         </header>
-        {bot?.pausedReason && <p className="text-warn text-sm">⏸ {bot.pausedReason}</p>}
+        {bot?.pausedReason && (
+          <div className="bg-warn/15 border border-warn/30 p-4 rounded-2xl flex items-start gap-3">
+            <AlertTriangle className="text-warn shrink-0 mt-0.5" size={18} />
+            <div>
+              <p className="text-warn font-bold text-sm">Bot is Paused</p>
+              <p className="text-warn/80 text-sm mt-0.5">{bot.pausedReason}</p>
+            </div>
+          </div>
+        )}
 
         {usage?.viewOnly && (
           <div className="card border-warn/50 bg-warn/10 flex flex-wrap items-center justify-between gap-3">
@@ -239,32 +299,42 @@ export default function Dashboard() {
 
         {/* ═══════════════ TOP — live trading & key numbers ═══════════════ */}
 
-        {/* Portfolio stat cards (key KPIs) */}
-        <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <LivePortfolioCard account={account} positions={positions} />
-          <Card label="Available" value={fmt(account?.availableBalance)} />
-          <Card label="In Trade (margin)" value={fmt(account?.marginUsed)} />
-          <LiveUnrealizedCard account={account} positions={positions} />
-          <LiveTodayCard todayRealized={d.todayPnl} positions={positions} />
-          <div className="card">
-            <p className="label">Today W/L</p>
-            <p className="stat"><span className="badge-up">{d.todayWins}W</span> <span className="text-muted text-base">/</span> <span className="badge-down">{d.todayLosses}L</span></p>
+        {/* Unified Hero Metrics Section */}
+        <section className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6">
+          
+          {/* Main Portfolio Summary */}
+          <div className="md:col-span-5 lg:col-span-4 flex flex-col gap-4">
+            <div className="card bg-gradient-to-br from-surface to-surface/50 border-white/20 h-full flex flex-col justify-center">
+              <LivePortfolioCard account={account} positions={positions} />
+              <div className="h-px bg-border/50 w-full my-4" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="label flex items-center gap-1"><DollarSign size={12} /> Available</p>
+                  <p className="text-xl font-bold text-fg tracking-tight">{fmt(account?.availableBalance)}</p>
+                </div>
+                <div>
+                  <p className="label flex items-center gap-1"><Briefcase size={12} /> Margin Used</p>
+                  <p className="text-xl font-bold text-fg tracking-tight">{fmt(account?.marginUsed)}</p>
+                </div>
+              </div>
+            </div>
           </div>
-          <Card label="ROI" value={`${stats?.roi ?? 0}%`} />
-          <Card label="Realized 7D" value={fmt(d.realized7d)} signed />
-          <Card label="Profit Factor" value={d.profitFactor} />
-          <Card label="Max Drawdown 7D" value={fmt(-d.maxDrawdown)} signed />
-          <Card label="Win Rate" value={`${stats?.winRate ?? 0}%`} />
-          <Card label="Open Trades" value={String(account?.openPositions ?? 0)} />
-        </section>
 
-        {/* Engine activity stat row — sits right after the portfolio KPIs */}
-        <section className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card label="Decisions (now)" value={String(d.decisions)} />
-          <Card label="Trades Taken" value={String(stats?.totalTrades ?? 0)} />
-          <Card label="Blocked (now)" value={String(d.blocked)} />
-          <Card label="Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay === 0 ? '∞' : (bot?.maxTradesPerDay ?? '—')}`} />
-          <Card label="Volume" value={fmt(d.volume)} />
+          {/* Performance KPIs */}
+          <div className="md:col-span-7 lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <LiveUnrealizedCard account={account} positions={positions} />
+            <LiveTodayCard todayRealized={d.todayPnl} positions={positions} />
+            <div className="card flex flex-col justify-center items-center text-center">
+              <p className="label"><Target size={14} className="inline mr-1"/> Today W/L</p>
+              <p className="stat mt-1"><span className="badge-up">{d.todayWins}W</span> <span className="text-muted/40 font-light mx-1">/</span> <span className="badge-down">{d.todayLosses}L</span></p>
+            </div>
+            <Card label="Win Rate" value={`${stats?.winRate ?? 0}%`} icon={<Activity size={14} />} />
+            
+            <Card label="Realized 7D" value={fmt(d.realized7d)} signed icon={<TrendingUp size={14} />} />
+            <Card label="Profit Factor" value={d.profitFactor} icon={<BarChart2 size={14} />} />
+            <Card label="Trades Today" value={`${d.todayTrades.length} / ${bot?.maxTradesPerDay === 0 ? '∞' : (bot?.maxTradesPerDay ?? '—')}`} icon={<Zap size={14} />} />
+            <Card label="Volume" value={fmt(d.volume)} icon={<BarChart2 size={14} />} />
+          </div>
         </section>
 
         {/* Top Opportunity + Next Trade Preview + Fear & Greed — directly under the KPI rows */}
@@ -710,14 +780,37 @@ function useLivePrices(symbols: string[]): Record<string, number> {
 function LivePositions({ positions, onClosed }: { positions: Position[]; onClosed: () => void }) {
   const prices = useLivePrices(positions.map((p) => p.symbol));
   const [busy, setBusy] = useState('');
-  async function closeNow(p: Position) {
-    if (!confirm(`Close ${p.side} ${p.symbol} now at market price?`)) return;
+  const [closeConfirmPos, setCloseConfirmPos] = useState<Position | null>(null);
+
+  async function executeClose() {
+    if (!closeConfirmPos) return;
+    const p = closeConfirmPos;
     setBusy(p.id);
-    try { await api.post(`/api/trading/positions/${p.id}/close`); onClosed(); }
-    catch (e) { alert((e as Error).message); } finally { setBusy(''); }
+    try { 
+      await api.post(`/api/trading/positions/${p.id}/close`); 
+      onClosed(); 
+      setCloseConfirmPos(null);
+    }
+    catch (e) { alert((e as Error).message); } 
+    finally { setBusy(''); }
   }
+
+  function closeNow(p: Position) {
+    setCloseConfirmPos(p);
+  }
+  
   return (
     <div className="card">
+      <ConfirmModal 
+        isOpen={!!closeConfirmPos}
+        title="Close Position"
+        message={`Are you sure you want to close the ${closeConfirmPos?.side} ${closeConfirmPos?.symbol} position now at market price?`}
+        confirmText="Close Position"
+        danger={true}
+        isLoading={busy === closeConfirmPos?.id}
+        onCancel={() => setCloseConfirmPos(null)}
+        onConfirm={executeClose}
+      />
       <div className="flex items-center justify-between mb-2">
         <p className="label">Open Positions</p>
         <span className="text-xs badge-up animate-pulse">● LIVE · 1s</span>
@@ -1040,9 +1133,14 @@ function ago(iso: string): string {
 }
 
 // ── Small UI pieces ──────────────────────────────────────────────────────────
-function Card({ label, value, signed }: { label: string; value?: string; signed?: boolean }) {
+function Card({ label, value, signed, icon }: { label: string; value?: string; signed?: boolean; icon?: React.ReactNode }) {
   const neg = signed && value?.includes('-');
-  return <div className="card"><p className="label">{label}</p><p className={`stat ${signed ? (neg ? 'badge-down' : 'badge-up') : ''}`}>{value ?? '…'}</p></div>;
+  return (
+    <div className="card flex flex-col justify-center items-center text-center">
+      <p className="label flex items-center justify-center gap-1.5">{icon && <span className="text-muted">{icon}</span>} {label}</p>
+      <p className={`stat mt-1 ${signed ? (neg ? 'badge-down' : 'badge-up') : ''}`}>{value ?? '…'}</p>
+    </div>
+  );
 }
 
 /**
@@ -1060,14 +1158,17 @@ function LivePortfolioCard({ account, positions }: { account?: Account; position
     return s + (long ? mark - entry : entry - mark) * num(p.quantity);
   }, 0);
   return (
-    <div className="card">
-      <div className="flex items-center justify-between">
-        <p className="label">Portfolio Value</p>
-        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="label !mb-0 flex items-center gap-1.5"><Briefcase size={14} /> Portfolio Value</p>
+        {positions.length > 0 && <span className="text-[10px] bg-accent/20 text-accent font-bold px-2 py-0.5 rounded-full flex items-center gap-1"><span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" /> LIVE</span>}
       </div>
-      <p className="stat">{account ? fmt(base + unreal) : '…'}</p>
+      <p className="text-4xl sm:text-5xl font-black text-fg tracking-tighter drop-shadow-sm">{account ? fmt(base + unreal) : '…'}</p>
       {positions.length > 0 && (
-        <p className={`text-xs ${unreal >= 0 ? 'text-accent' : 'text-danger'}`}>{unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} unrealized</p>
+        <p className={`text-sm font-semibold mt-2 flex items-center gap-1 ${unreal >= 0 ? 'text-accent' : 'text-danger'}`}>
+          {unreal >= 0 ? <TrendingUp size={16} /> : <TrendingUp size={16} className="rotate-180" />}
+          {unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} unrealized
+        </p>
       )}
     </div>
   );
@@ -1086,12 +1187,12 @@ function LiveUnrealizedCard({ account, positions }: { account?: Account; positio
   const prices = useLivePrices(positions.map((p) => p.symbol));
   const v = positions.length ? liveUnreal(positions, prices) : num(account?.unrealizedPnl);
   return (
-    <div className="card">
-      <div className="flex items-center justify-between">
-        <p className="label">Unrealized P&L</p>
-        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+    <div className="card flex flex-col justify-center items-center text-center">
+      <div className="flex items-center justify-center gap-1.5 w-full">
+        <p className="label !mb-0"><Activity size={14} className="inline mr-1" /> Unrealized P&L</p>
+        {positions.length > 0 && <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse ml-1" title="Live updates active"></span>}
       </div>
-      <p className={`stat ${v >= 0 ? 'badge-up' : 'badge-down'}`}>{account ? fmt(v) : '…'}</p>
+      <p className={`stat mt-1 ${v >= 0 ? 'badge-up' : 'badge-down'}`}>{account ? fmt(v) : '…'}</p>
     </div>
   );
 }
@@ -1101,14 +1202,14 @@ function LiveTodayCard({ todayRealized, positions }: { todayRealized: number; po
   const unreal = liveUnreal(positions, prices);
   const total = todayRealized + unreal;
   return (
-    <div className="card">
-      <div className="flex items-center justify-between">
-        <p className="label">Today P&L</p>
-        {positions.length > 0 && <span className="text-[10px] badge-up animate-pulse">● live</span>}
+    <div className="card flex flex-col justify-center items-center text-center">
+      <div className="flex items-center justify-center gap-1.5 w-full">
+        <p className="label !mb-0"><TrendingUp size={14} className="inline mr-1" /> Today P&L</p>
+        {positions.length > 0 && <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse ml-1" title="Live updates active"></span>}
       </div>
-      <p className={`stat ${total >= 0 ? 'badge-up' : 'badge-down'}`}>{fmt(total)}</p>
+      <p className={`stat mt-1 ${total >= 0 ? 'badge-up' : 'badge-down'}`}>{fmt(total)}</p>
       {positions.length > 0 && (
-        <p className="text-muted text-[11px] mt-0.5">{fmt(todayRealized)} closed · {unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} open</p>
+        <p className="text-muted/70 font-medium text-[10px] mt-1 uppercase tracking-wider">{fmt(todayRealized)} closed <span className="mx-0.5">•</span> {unreal >= 0 ? '+' : ''}{unreal.toFixed(2)} open</p>
       )}
     </div>
   );

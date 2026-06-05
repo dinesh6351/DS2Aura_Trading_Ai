@@ -14,7 +14,7 @@ interface Overview {
 }
 interface AdminUser {
   id: string; email: string; role: string; status: string; botStatus?: string; plan?: string;
-  subStatus?: string; tradesThisPeriod: number;
+  subStatus?: string; tradesThisPeriod: number; canLiveTrade: boolean;
   lifetimeProfit: number; openPositions: number; totalTrades: number;
 }
 interface Branding {
@@ -92,6 +92,11 @@ export default function AdminPage() {
     const role = u.role === 'ADMIN' ? 'TRADER' : 'ADMIN';
     if (!confirm(`Set ${u.email} role to ${role}? ${role === 'ADMIN' ? '(grants free, unlimited access)' : ''}`)) return;
     void act(`${u.id}:role`, `Role → ${role}`, () => api.post(`/api/admin/users/${u.id}/role`, { role }));
+  }
+  function toggleLive(u: AdminUser) {
+    const canLiveTrade = !u.canLiveTrade;
+    if (!confirm(`${canLiveTrade ? 'Grant' : 'Revoke'} Live Trading access for ${u.email}?`)) return;
+    void act(`${u.id}:live`, `Live Trading → ${canLiveTrade ? 'ON' : 'OFF'}`, () => api.post(`/api/admin/users/${u.id}/live-trading`, { canLiveTrade }));
   }
   async function saveBranding() {
     if (!brand) return;
@@ -226,6 +231,11 @@ export default function AdminPage() {
                 <button className={`text-xs disabled:opacity-40 ${u.role === 'ADMIN' ? 'btn-danger' : 'btn'}`} disabled={!!busy} onClick={() => toggleAdmin(u)}>
                   {u.role === 'ADMIN' ? '★ Remove Admin' : 'Make Admin'}
                 </button>
+                {u.role !== 'ADMIN' && (
+                  <button className={`text-xs disabled:opacity-40 ${u.canLiveTrade ? 'btn-danger' : 'btn'}`} disabled={!!busy} onClick={() => toggleLive(u)}>
+                    {u.canLiveTrade ? 'Revoke Live Trade' : 'Allow Live Trade'}
+                  </button>
+                )}
                 <button className="btn-danger text-xs disabled:opacity-40" disabled={!!busy} onClick={() => delUser(u)}>🗑 Delete</button>
               </td>
             </tr>))}</tbody>

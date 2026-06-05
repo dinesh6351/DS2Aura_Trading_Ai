@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { TradingMode, REGIONS, tpLadder } from '@platform/shared';
 import { api, ensureSession } from '@/lib/api';
 import { AppNav } from '@/components/AppNav';
+import { UserCog, User, Settings, Tag, Lock, ShieldCheck, Zap, Key, Link as LinkIcon, RefreshCw, Send, AlertTriangle } from 'lucide-react';
 
 interface KeyRow { id: string; label: string; status: string; canTrade: boolean; canWithdraw: boolean; lastValidatedAt: string | null; }
 interface ConnTest { connected: boolean; canTrade: boolean; canWithdraw: boolean; totalBalance: number; availableBalance: number; warning?: string; }
@@ -58,47 +59,60 @@ export default function SettingsPage() {
   const hasKey = keys.some((k) => k.status === 'VALID');
   const ready = hasKey; // bot can start once a valid key exists
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'basic', label: '👤 Basic Information' },
-    { id: 'setup', label: '⚙️ Setup' },
-    { id: 'coupon', label: '🎟️ Coupon' },
-    { id: 'password', label: '🔒 Change Password' },
+  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+    { id: 'basic', label: 'Basic Information', icon: User },
+    { id: 'setup', label: 'Setup', icon: Settings },
+    { id: 'coupon', label: 'Coupon', icon: Tag },
+    { id: 'password', label: 'Password', icon: Lock },
   ];
 
   return (
     <>
       <AppNav active="settings" />
-      <main className="p-3 sm:p-4 md:p-6 space-y-5 md:space-y-6 max-w-4xl mx-auto">
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight">Profile</h1>
-          <p className="text-muted text-sm">Your account details, trading setup, coupons and security — all in one place.</p>
+      <main className="p-4 sm:p-6 md:p-8 space-y-6 md:space-y-8 max-w-5xl mx-auto">
+        <header className="bg-surface/40 backdrop-blur-md border border-white/10 p-6 sm:p-8 rounded-3xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
+              <UserCog className="text-accent" size={28} /> Profile & Settings
+            </h1>
+            <p className="text-muted text-sm mt-2 font-medium">Manage your account details, trading setup, coupons, and security.</p>
+          </div>
         </header>
 
-        <nav className="flex flex-wrap gap-1 border-b border-border overflow-x-auto">
-          {tabs.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`px-3 py-2 text-sm rounded-t border-b-2 -mb-px whitespace-nowrap transition ${tab === t.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-accent'}`}>
-              {t.label}
-            </button>
-          ))}
+        <nav className="flex flex-wrap gap-2 border-b border-border/50 pb-2 overflow-x-auto no-scrollbar">
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl whitespace-nowrap transition-all ${tab === t.id ? 'bg-accent/15 text-accent shadow-sm' : 'text-muted hover:text-fg hover:bg-surface2/80'}`}>
+                <Icon size={16} /> {t.label}
+              </button>
+            );
+          })}
         </nav>
 
-        {tab === 'basic' && <BasicInfoSection me={me} onChange={load} />}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+          <div className="lg:col-span-12 space-y-6">
+            {tab === 'basic' && <BasicInfoSection me={me} onChange={load} />}
 
-        {tab === 'setup' && (
-          me?.emailVerified ? (
-            <>
-              <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
-              <BinanceSection keys={keys} onChange={load} />
-              <TelegramSection tg={tg} onChange={load} />
-              {bot && <TradingConfigSection bot={bot} watchlist={watchlist} isAdmin={me?.role === 'ADMIN'} onChange={load} />}
-              {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
-            </>
-          ) : <EmailVerifyGate email={me?.email} onVerified={load} />
-        )}
+            {tab === 'setup' && (
+              me?.emailVerified ? (
+                <div className="space-y-6 lg:space-y-8">
+                  <SetupChecklist hasKey={hasKey} tgConfigured={!!tg?.configured} paper={bot?.paperTrading ?? true} running={bot?.status === 'RUNNING'} />
+                  <div className="grid sm:grid-cols-2 gap-6">
+                    <BinanceSection keys={keys} onChange={load} />
+                    <TelegramSection tg={tg} onChange={load} />
+                  </div>
+                  {bot && <TradingConfigSection bot={bot} watchlist={watchlist} isAdmin={me?.role === 'ADMIN'} onChange={load} />}
+                  {bot && <ActivationSection bot={bot} ready={ready} onChange={load} />}
+                </div>
+              ) : <EmailVerifyGate email={me?.email} onVerified={load} />
+            )}
 
-        {tab === 'coupon' && <CouponSection />}
-        {tab === 'password' && <ChangePasswordSection />}
+            {tab === 'coupon' && <CouponSection />}
+            {tab === 'password' && <ChangePasswordSection />}
+          </div>
+        </div>
       </main>
     </>
   );
