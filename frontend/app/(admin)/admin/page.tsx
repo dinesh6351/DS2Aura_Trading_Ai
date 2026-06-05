@@ -1,5 +1,6 @@
 'use client';
 
+import Link from "next/link";
 import { useEffect, useState } from 'react';
 import { api, ensureSession, getApiBase } from '@/lib/api';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -106,8 +107,8 @@ export default function AdminPage() {
         <h1 className="text-xl font-semibold tracking-tight">Admin CRM</h1>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <a href="/dashboard" className="btn-outline text-sm">← Dashboard</a>
-          <a href="/settings" className="btn-outline text-sm">Profile</a>
+          <Link href="/dashboard" className="btn-outline text-sm">← Dashboard</Link>
+          <Link href="/settings" className="btn-outline text-sm">Profile</Link>
         </div>
       </div>
       {ov?.binanceBanActive && <p className="text-danger">⚠ Binance rate-limit ban active on worker IP</p>}

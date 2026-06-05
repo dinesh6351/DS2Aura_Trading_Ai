@@ -82,17 +82,17 @@ async function liveSnapshot(userId: string): Promise<LiveSnapshot> {
  */
 export const tradingService = {
   async account(userId: string) {
-    const [live, acct, cfg, openCount, openPos, trades] = await Promise.all([
+    const [live, acct, cfg, openCount, openPos, agg] = await Promise.all([
       liveSnapshot(userId),
       prisma.tradingAccount.findFirst({ where: { userId } }),
       prisma.botConfig.findUnique({ where: { userId }, select: { paperTrading: true } }),
       prisma.position.count({ where: { userId, status: 'OPEN' } }),
       prisma.position.findMany({ where: { userId, status: 'OPEN' } }),
-      prisma.tradeHistory.findMany({ where: { userId } }),
+      prisma.tradeHistory.aggregate({ _sum: { netPnl: true }, where: { userId } }),
     ]);
 
     if (cfg?.paperTrading) {
-      const paperPnl = trades.reduce((sum, t) => sum + Number(t.netPnl), 0);
+      const paperPnl = Number(agg._sum.netPnl ?? 0);
       const startBalance = 100.00; // user requested $100
       
       let totalUnrealized = 0;
@@ -243,26 +243,33 @@ export const tradingService = {
   },
 
   async stats(userId: string) {
-    const [trades, profile, cfg, acct] = await Promise.all([
-      prisma.tradeHistory.findMany({ where: { userId } }),
+    const [profile, cfg, acct] = await Promise.all([
       prisma.profile.findUnique({ where: { userId }, select: { timezone: true } }),
       prisma.botConfig.findUnique({ where: { userId }, select: { lastDailyResetAt: true } }),
       prisma.tradingAccount.findFirst({ where: { userId } }),
     ]);
     const tz = profile?.timezone || 'UTC';
-    const wins = trades.filter((t) => Number(t.grossPnl) > 0).length;
-    const realized = trades.reduce((s, t) => s + Number(t.netPnl), 0);
     const now = Date.now();
-    const sum = (from: number) => trades.filter((t) => t.closedAt.getTime() >= from)
-      .reduce((s, t) => s + Number(t.netPnl), 0);
+    const [totalAgg, winsAgg, todayAgg, weekAgg, monthAgg] = await Promise.all([
+      prisma.tradeHistory.aggregate({ _count: { id: true }, _sum: { netPnl: true }, where: { userId } }),
+      prisma.tradeHistory.count({ where: { userId, grossPnl: { gt: 0 } } }),
+      prisma.tradeHistory.aggregate({ _sum: { netPnl: true }, where: { userId, closedAt: { gte: startOfDayUtc(tz) } } }),
+      prisma.tradeHistory.aggregate({ _sum: { netPnl: true }, where: { userId, closedAt: { gte: new Date(now - 7 * 864e5) } } }),
+      prisma.tradeHistory.aggregate({ _sum: { netPnl: true }, where: { userId, closedAt: { gte: new Date(now - 30 * 864e5) } } }),
+    ]);
+
+    const totalTrades = totalAgg._count.id;
+    const wins = winsAgg;
+    const realized = Number(totalAgg._sum.netPnl ?? 0);
     const equity = Number(acct?.totalBalance ?? 0);
+    
     return {
-      totalTrades: trades.length,
-      winRate: trades.length ? +(wins / trades.length * 100).toFixed(1) : 0,
+      totalTrades,
+      winRate: totalTrades ? +(wins / totalTrades * 100).toFixed(1) : 0,
       realizedPnl: +realized.toFixed(4),
-      todayProfit: +sum(startOfDayUtc(tz).getTime()).toFixed(4), // calendar TODAY in the user's region
-      weeklyProfit: +sum(now - 7 * 864e5).toFixed(4),
-      monthlyProfit: +sum(now - 30 * 864e5).toFixed(4),
+      todayProfit: +(Number(todayAgg._sum.netPnl ?? 0)).toFixed(4), // calendar TODAY in the user's region
+      weeklyProfit: +(Number(weekAgg._sum.netPnl ?? 0)).toFixed(4),
+      monthlyProfit: +(Number(monthAgg._sum.netPnl ?? 0)).toFixed(4),
       roi: equity > 0 ? +((realized / equity) * 100).toFixed(2) : 0,
       timezone: tz,
       lastResetAt: cfg?.lastDailyResetAt ?? null,
@@ -278,7 +285,10 @@ export const tradingService = {
 
   /** Trader Performance Analysis — per-coin rollup (ported from the dashboard panel). */
   async performanceByCoin(userId: string) {
-    const trades = await prisma.tradeHistory.findMany({ where: { userId } });
+    const trades = await prisma.tradeHistory.findMany({ 
+      where: { userId },
+      select: { symbol: true, grossPnl: true, netPnl: true, entryPrice: true, quantity: true }
+    });
     const byCoin = new Map<string, { trades: number; wins: number; pnl: number; volume: number }>();
     for (const t of trades) {
       const c = byCoin.get(t.symbol) ?? { trades: 0, wins: 0, pnl: 0, volume: 0 };

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from "next/link";
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -114,24 +115,25 @@ export default function Dashboard() {
   }, []);
 
   const load = useCallback(async () => {
-    // Render each card the MOMENT its own data arrives — don't wait for the slowest
-    // (Binance) call, which otherwise leaves every card blank for 10–15s on load.
-    // Each call sets its state independently; a failed one keeps the last value.
-    const tasks = [
-      api.get<Account>('/api/trading/account').then(setAccount),
-      api.get<Stats>('/api/trading/stats').then(setStats),
-      api.get<BotCfg>('/api/bot/status').then(setBot),
-      api.get<Position[]>('/api/trading/positions').then((p) => { if (p) setPositions(p); }),
-      api.get<Usage>('/api/billing/usage').then(setUsage),
-      api.get<Market>('/api/trading/market-status').then(setMarket),
-      api.get<Trade[]>('/api/trading/trades').then(setTrades),
-      api.get<Perf[]>('/api/trading/performance').then(setPerf),
-      api.get<LogItem[]>('/api/bot/log').then(setLog),
-      api.get<string[]>('/api/trading/watchlist').then(setWatchlist),
-      api.get<BinancePnl>('/api/trading/binance-pnl').then(setBpnl),
-    ];
+    try {
+      const sync = await api.get<any>('/api/trading/dashboard-sync');
+      setAccount(sync.account);
+      setStats(sync.stats);
+      setBot(sync.bot);
+      if (sync.positions) setPositions(sync.positions);
+      setUsage(sync.usage);
+      setMarket(sync.market);
+      setTrades(sync.trades);
+      setPerf(sync.perf);
+      setLog(sync.log);
+      if (sync.watchlist) setWatchlist(sync.watchlist);
+      setBpnl(sync.bpnl);
+      if (sync.signals && sync.signals.length) setSignals(sync.signals);
+      setD(sync.analytics || {});
+    } catch (e) {
+      // keep last state
+    }
     setLastLoad(Date.now());
-    await Promise.allSettled(tasks); // let callers (refreshAll/botAction) await completion
   }, []);
 
   async function subscribe(plan: 'BASIC' | 'PRO' = 'BASIC') { await api.post('/api/billing/subscribe', { plan }); await load(); }
@@ -181,8 +183,12 @@ export default function Dashboard() {
     );
   }, [me, load, loadSignals]);
 
-  // ── Derived analytics (all client-side from data we already have) ───────────
-  const d = useMemo(() => deriveAnalytics(trades, signals, perf, bot, market, account, stats), [trades, signals, perf, bot, market, account, stats]);
+  const [d, setD] = useState<any>({
+    equity: [], drawdown: [], maxDrawdown: 0, volume: 0, fees: 0, realized7d: 0, profitFactor: '—',
+    decisions: 0, blocked: 0, top: null, todayTrades: [], todayWins: 0, todayLosses: 0, todayPnl: 0, todayWinRate: 0,
+    dailyNarrative: 'Loading analytics...', whyCards: [], proRead: [], todayTradesFooter: '', perSymbol7d: [],
+    analysis: [], analysisSummary: '', strengths: '', weaknesses: '', risks: '',
+  });
   const [theme] = useTheme();
   const tc = themeColors(theme);
 
@@ -278,7 +284,7 @@ export default function Dashboard() {
                     )}
                   </p>
                 </div>
-                <a href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</a>
+                <Link href={`/chart/${d.top.symbol}`} className="btn">📈 Preview this trade</Link>
               </div>
             )}
           </div>
@@ -295,7 +301,7 @@ export default function Dashboard() {
                     {d.top.allPass ? <span className="badge-up">READY ⓘ</span> : <span className="text-warn">GATED ⓘ</span>}
                   </GateDetail>
                 } />
-                <a href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</a>
+                <Link href={`/chart/${d.top.symbol}`} className="btn text-xs inline-block mt-1">📈 Analyze</Link>
               </div>
             )}
           </div>
@@ -395,7 +401,7 @@ export default function Dashboard() {
                   <td className={`text-center text-xs ${num(s.vwapDeltaPct) >= 0 ? 'badge-up' : 'badge-down'}`}>{s.vwapDeltaPct == null ? '—' : `${s.vwapDeltaPct}%`}</td>
                   <td className="text-center text-xs">{s.adx ?? '—'}</td>
                   <td className="text-left pl-3 text-xs text-muted">{s.blocking}</td>
-                  <td className="text-right"><a href={`/chart/${s.symbol}`} className="text-accent text-xs">chart</a></td>
+                  <td className="text-right"><Link href={`/chart/${s.symbol}`} className="text-accent text-xs">chart</Link></td>
                 </tr>))}</tbody>
             </table>
           )}
@@ -473,7 +479,7 @@ export default function Dashboard() {
         <section>
           <p className="label mb-2">🧠 Why the bot trades / held back today</p>
           <div className="grid md:grid-cols-2 gap-3">
-            {d.whyCards.map((c, i) => <InfoCard key={i} icon={c.icon} tone={c.tone} text={c.text} />)}
+            {d?.whyCards?.map((c: any, i: number) => <InfoCard key={i} icon={c.icon} tone={c.tone} text={c.text} />)}
           </div>
         </section>
 
@@ -481,7 +487,7 @@ export default function Dashboard() {
         <section>
           <p className="label mb-2">📈 Professional read &amp; what to do</p>
           <div className="grid md:grid-cols-3 gap-3">
-            {d.proRead.map((c, i) => <InfoCard key={i} icon={c.icon} tone={c.tone} text={c.text} />)}
+            {d?.proRead?.map((c: any, i: number) => <InfoCard key={i} icon={c.icon} tone={c.tone} text={c.text} />)}
           </div>
         </section>
 
@@ -493,7 +499,7 @@ export default function Dashboard() {
           ) : (
             <>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {d.todayTrades.slice(0, 12).map((t) => <TradeReasonCard key={t.id} t={t} />)}
+                {d?.todayTrades?.slice(0, 12).map((t: any) => <TradeReasonCard key={t.id} t={t} />)}
               </div>
               <p className="text-xs text-muted mt-2">{d.todayTradesFooter}</p>
             </>
@@ -531,9 +537,9 @@ export default function Dashboard() {
             {d.perSymbol7d.length === 0 ? <Empty>No closed trades in the last 7 days</Empty> : (
               <table className="w-full text-sm">
                 <thead><tr className="text-muted text-xs"><th className="text-left">Symbol</th><th>Net P&L</th><th>Trades</th><th>W</th><th>L</th><th>Last</th></tr></thead>
-                <tbody>{d.perSymbol7d.map((c) => (
+                <tbody>{d?.perSymbol7d?.map((c: any) => (
                   <tr key={c.symbol} className="border-t border-border cursor-pointer hover:bg-accent/5" onClick={() => openDetail(c.symbol)}>
-                    <td className="text-accent whitespace-nowrap">{c.symbol} <a href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</a></td>
+                    <td className="text-accent whitespace-nowrap">{c.symbol} <Link href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</Link></td>
                     <td className={`text-center ${c.netPnl >= 0 ? 'badge-up' : 'badge-down'}`}>{c.netPnl >= 0 ? '+' : ''}{c.netPnl.toFixed(2)}</td>
                     <td className="text-center">{c.trades}</td><td className="text-center badge-up">{c.wins}</td><td className="text-center badge-down">{c.trades - c.wins}</td>
                     <td className="text-center text-xs text-muted">{ago(c.lastClosedAt)}</td>
@@ -551,9 +557,9 @@ export default function Dashboard() {
               <p className="text-sm text-muted leading-relaxed">{d.analysisSummary}</p>
               <table className="w-full text-sm min-w-[760px]">
                 <thead><tr className="text-muted text-xs"><th className="text-left">Coin</th><th>Trades</th><th>W/L</th><th>Win%</th><th>P&L</th><th>Risk</th><th>Sentiment</th><th className="text-left pl-3">AI analysis</th></tr></thead>
-                <tbody>{d.analysis.map((c) => (
+                <tbody>{d?.analysis?.map((c: any) => (
                   <tr key={c.symbol} className="border-t border-border cursor-pointer hover:bg-accent/5 align-top" onClick={() => openDetail(c.symbol)}>
-                    <td className="text-accent font-bold whitespace-nowrap">{c.symbol} <a href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</a></td>
+                    <td className="text-accent font-bold whitespace-nowrap">{c.symbol} <Link href={`/chart/${c.symbol}`} onClick={(e) => e.stopPropagation()} className="text-xs hover:underline">📈</Link></td>
                     <td className="text-center">{c.trades}</td>
                     <td className="text-center text-xs">{c.wins}/{c.trades - c.wins}</td>
                     <td className="text-center">{c.winRate}%</td>
@@ -599,163 +605,7 @@ export default function Dashboard() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Derivations + rule-based narrative (the "AI" the original dashboard used —
-// deterministic heuristics over free market signals, no LLM).
-// ─────────────────────────────────────────────────────────────────────────────
-interface TradeReason extends Trade { reason: string }
-function deriveAnalytics(
-  trades: Trade[], signals: SignalRow[], perf: Perf[], bot?: BotCfg, market?: Market, account?: Account, stats?: Stats,
-) {
-  const now = Date.now();
-  const sorted = [...trades].sort((a, b) => +new Date(a.closedAt) - +new Date(b.closedAt));
 
-  // cumulative equity + drawdown
-  const equity: { t: string; pnl: number }[] = [];
-  const drawdown: { t: string; dd: number }[] = [];
-  let cum = 0, peak = 0, maxDrawdown = 0;
-  for (const tr of sorted) {
-    cum += num(tr.netPnl);
-    peak = Math.max(peak, cum);
-    const dd = cum - peak;
-    maxDrawdown = Math.max(maxDrawdown, peak - cum);
-    const label = new Date(tr.closedAt).toLocaleDateString();
-    equity.push({ t: label, pnl: +cum.toFixed(2) });
-    drawdown.push({ t: label, dd: +dd.toFixed(2) });
-  }
-
-  const volume = trades.reduce((s, t) => s + num(t.entryPrice) * num(t.quantity), 0);
-  const fees = trades.reduce((s, t) => s + num(t.feeUsd), 0);
-
-  const within7 = (t: Trade) => +new Date(t.closedAt) >= now - 7 * DAY;
-  const trades7d = trades.filter(within7);
-  const realized7d = trades7d.reduce((s, t) => s + num(t.netPnl), 0);
-  const gains = trades7d.filter((t) => num(t.netPnl) > 0).reduce((s, t) => s + num(t.netPnl), 0);
-  const losses = trades7d.filter((t) => num(t.netPnl) < 0).reduce((s, t) => s + Math.abs(num(t.netPnl)), 0);
-  const profitFactor = losses > 0 ? (gains / losses).toFixed(2) : gains > 0 ? '∞' : '—';
-
-  // calendar-today
-  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
-  const todayAll = trades.filter((t) => +new Date(t.closedAt) >= +startToday)
-    .sort((a, b) => +new Date(b.closedAt) - +new Date(a.closedAt));
-  const todayTrades: TradeReason[] = todayAll.map((t) => ({ ...t, reason: tradeReason(t) }));
-  const todayWins = todayTrades.filter((t) => num(t.netPnl) > 0).length;
-  const todayLosses = todayTrades.filter((t) => num(t.netPnl) < 0).length;
-  const todayPnl = todayTrades.reduce((s, t) => s + num(t.netPnl), 0);
-  const todayWinRate = todayTrades.length ? Math.round((todayWins / todayTrades.length) * 100) : 0;
-
-  const directional = signals.filter((s) => s.bias !== 'none');
-  const top = [...directional].sort((a, b) => b.score - a.score)[0] ?? null;
-  const longSetups = signals.filter((s) => s.bias === 'long').length;
-  const shortSetups = signals.filter((s) => s.bias === 'short').length;
-  const qualifying = signals.filter((s) => s.allPass).length;
-  const decisions = signals.length;
-  const blocked = signals.filter((s) => !s.allPass).length;
-  const threshold = bot?.scoreThreshold ?? 85;
-  const btc = market?.btcTrend ?? 'neutral';
-
-  // most common blocking reasons
-  const blkTally = new Map<string, number>();
-  for (const s of signals) if (!s.allPass && s.bias !== 'none') blkTally.set(s.blocking, (blkTally.get(s.blocking) ?? 0) + 1);
-  const topBlocks = [...blkTally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
-
-  // narrative
-  const dailyNarrative = todayTrades.length === 0
-    ? `No trades closed today. ${btc === 'bearish' ? 'BTC is bearish so long alt setups are gated' : btc === 'bullish' ? 'BTC is bullish — the bot favours longs' : 'BTC is neutral'}, and the ${threshold}-score quality bar only passes the best setups. Best setups still forming below ${threshold}.`
-    : `Today: ${todayTrades.length} trade${todayTrades.length > 1 ? 's' : ''} closed (${todayWins}W/${todayLosses}L, ${todayWinRate}% win rate) for ${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}. ${btc === 'bearish' ? 'Frequency is low because BTC is bearish (longs gated), plus' : 'On top of that,'} the ${threshold}-score quality bar only passes the best setups.`;
-
-  const tone = (t: 'info' | 'warn' | 'good' | 'blue'): InfoTone => t;
-  const whyCards: { icon: string; tone: InfoTone; text: string }[] = [
-    { icon: bot?.status === 'RUNNING' ? '🟢' : '📉', tone: tone(bot?.status === 'RUNNING' ? 'good' : 'info'),
-      text: bot?.status === 'RUNNING' ? 'The live bot is running and evaluating every watchlist coin each tick.' : `The bot is ${bot?.status?.toLowerCase() ?? 'stopped'} — signals below are computed but no orders fire until you Start it.` },
-    { icon: '🟦', tone: tone('blue'),
-      text: btc === 'bearish' ? 'BTC is BEARISH — the alt-long critical gate blocks every LONG alt setup. Only shorts can fire.'
-        : btc === 'bullish' ? 'BTC is BULLISH — the trend favours longs; short alt setups face the counter-trend gate.'
-        : 'BTC is NEUTRAL — both directions are allowed; the score bar does the filtering.' },
-    { icon: '🟧', tone: tone('warn'),
-      text: topBlocks.length ? `Most common blockers right now: ${topBlocks.map(([b, n]) => `${b} (${n})`).join('; ')}.` : 'No recurring blockers — conditions are clean across the watchlist.' },
-    { icon: qualifying > 0 ? '🟩' : '⚪', tone: tone(qualifying > 0 ? 'good' : 'info'),
-      text: qualifying > 0 ? `${qualifying} coin${qualifying > 1 ? 's' : ''} clear${qualifying > 1 ? '' : 's'} the ${threshold} score bar and would trade on the next tick.` : `No coin clears the ${threshold} score threshold yet — by design the bot waits for high-quality setups. Quiet days are expected.` },
-  ];
-
-  const edge = shortSetups > longSetups ? 'SHORT' : longSetups > shortSetups ? 'LONG' : 'BALANCED';
-  const proRead: { icon: string; tone: InfoTone; text: string }[] = [
-    { icon: '⚪', tone: tone('info'), text: `Limits: concurrency ${bot?.maxConcurrentPositions ?? 1} position(s), score threshold ${threshold}, max ${bot?.maxTradesPerDay ?? '—'} trades/day.` },
-    { icon: '🟧', tone: tone('warn'),
-      text: edge === 'BALANCED' ? `Edge is balanced (${longSetups} long / ${shortSetups} short setups). No strong directional lean — let the score bar decide.`
-        : `Edge today leans ${edge} (${shortSetups} short / ${longSetups} long setups). BTC is ${btc} — ${edge === 'SHORT' && btc === 'bearish' || edge === 'LONG' && btc === 'bullish' ? `${edge} is the trend-aligned, higher-probability side, and the bot is correctly favouring it.` : 'watch for counter-trend risk.'}` },
-    { icon: '🟦', tone: tone('blue'),
-      text: qualifying > 0 ? `${qualifying} setup(s) qualify — the bot will take them on the next tick if margin and daily caps allow.`
-        : `Setups are forming below ${threshold}. Either hold for quality, or lower the score threshold (e.g. ${Math.max(70, threshold - 7)}) to capture trend-aligned ${edge.toLowerCase()}s. Do NOT force counter-trend trades against BTC.` },
-  ];
-
-  const todayTradesFooter = todayLosses > todayWins
-    ? 'Red today. Losses hitting the stop is the protection working — judge over many trades; the strict score bar + ADX gate aim to reduce those.'
-    : todayTrades.length > 0 ? 'Green today — winners came from trend-aligned, high-score entries. Keep the quality bar where it is.' : '';
-
-  // per-symbol 7d
-  const bySym = new Map<string, { netPnl: number; trades: number; wins: number; lastClosedAt: string }>();
-  for (const t of trades7d) {
-    const c = bySym.get(t.symbol) ?? { netPnl: 0, trades: 0, wins: 0, lastClosedAt: t.closedAt };
-    c.netPnl += num(t.netPnl); c.trades++; if (num(t.netPnl) > 0) c.wins++;
-    if (+new Date(t.closedAt) > +new Date(c.lastClosedAt)) c.lastClosedAt = t.closedAt;
-    bySym.set(t.symbol, c);
-  }
-  const perSymbol7d = [...bySym.entries()].map(([symbol, c]) => ({ symbol, ...c, netPnl: +c.netPnl.toFixed(2) }))
-    .sort((a, b) => b.netPnl - a.netPnl);
-
-  // trader analysis (enrich perf with sentiment + text)
-  const analysis = perf.map((c) => ({
-    ...c,
-    riskLabel: c.riskScore > 60 ? 'HIGH' : c.riskScore > 35 ? 'MOD' : 'LOW',
-    sentiment: c.winRate >= 60 && c.netPnl >= 0 ? 'Bullish' : c.winRate <= 40 || c.netPnl < 0 ? 'Bearish' : 'Neutral',
-    analysis: coinAnalysis(c),
-  }));
-  const best = [...perf].sort((a, b) => b.netPnl - a.netPnl)[0];
-  const worst = [...perf].sort((a, b) => a.netPnl - b.netPnl)[0];
-  const totalTrades = perf.reduce((s, c) => s + c.trades, 0);
-  const totalPnl = perf.reduce((s, c) => s + c.netPnl, 0);
-  const avgWin = stats?.winRate ?? 0;
-  const avgRisk = perf.length ? Math.round(perf.reduce((s, c) => s + c.riskScore, 0) / perf.length) : 0;
-  const portfolioRisk = avgRisk > 60 ? 'HIGH' : avgRisk > 35 ? 'MODERATE' : 'LOW';
-  const analysisSummary = perf.length
-    ? `Over the recent period you took ${totalTrades} trade${totalTrades > 1 ? 's' : ''} across ${perf.length} coin${perf.length > 1 ? 's' : ''} at a ${avgWin}% win rate for ${totalPnl >= 0 ? 'a gain of +' : 'a loss of '}$${Math.abs(totalPnl).toFixed(2)}. Best: ${best?.symbol ?? '—'}. Weakest: ${worst?.symbol ?? '—'}. Current portfolio risk ${portfolioRisk}.`
-    : '';
-  const strengths = best && best.netPnl > 0 ? `${best.symbol} is your most profitable coin (+$${best.netPnl.toFixed(2)}); trend-aligned entries are working.` : 'Discipline: the quality bar is keeping you out of low-probability trades.';
-  const weaknesses = worst && worst.netPnl < 0 ? `${worst.symbol} is dragging the book (${worst.netPnl.toFixed(2)}); consider tightening its filter or pausing it.` : 'No major loser — losses are well-contained by the stop.';
-  const risks = `Portfolio risk ${portfolioRisk}. Keep concurrency at ${bot?.maxConcurrentPositions ?? 1} and respect the ${bot?.maxTradesPerDay ?? '—'}-trade daily cap; don't fight a ${btc} BTC.`;
-
-  return {
-    equity, drawdown, maxDrawdown, volume, fees, realized7d, profitFactor,
-    decisions, blocked, top, todayTrades, todayWins, todayLosses, todayPnl, todayWinRate,
-    dailyNarrative, whyCards, proRead, todayTradesFooter, perSymbol7d,
-    analysis, analysisSummary, strengths, weaknesses, risks,
-  };
-}
-
-type InfoTone = 'info' | 'warn' | 'good' | 'blue';
-
-function tradeReason(t: Trade): string {
-  const pnl = num(t.netPnl);
-  const dur = t.durationSec ? `${Math.round(t.durationSec / 60)}m` : '';
-  const r = t.exitReason;
-  const dir = t.side === 'LONG' ? 'long' : 'short';
-  if (r === 'TP') return `${dir} hit take-profit${dur ? ` after ${dur}` : ''} — full target reached. +$${pnl.toFixed(2)}.`;
-  if (r === 'TRAIL') return `${dir} trailing stop locked in profit as the move extended${dur ? ` over ${dur}` : ''}. +$${pnl.toFixed(2)}.`;
-  if (r === 'SL') return pnl < 0 ? `${dir} stopped out${dur ? ` after ${dur}` : ''} — trend failed to follow through. $${pnl.toFixed(2)} (protection working).` : `${dir} break-even stop protected the entry. $${pnl.toFixed(2)}.`;
-  if (r === 'LIQUIDATION') return `${dir} liquidated — outsized adverse move.`;
-  if (r === 'MANUAL' || r === 'EXTERNAL') return `${dir} closed manually/outside the bot. ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}.`;
-  return `${dir} closed. ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}.`;
-}
-
-function coinAnalysis(c: Perf): string {
-  const l = c.trades - c.wins;
-  if (c.trades === 0) return 'No completed trades.';
-  if (c.netPnl > 0 && c.winRate >= 55) return `Strong: ${c.wins}/${c.trades} winners, +$${c.netPnl.toFixed(2)}. Setups here are aligning with the trend — keep trading it as configured.`;
-  if (c.netPnl > 0) return `Net positive (+$${c.netPnl.toFixed(2)}) despite a ${c.winRate}% win rate — winners are larger than losers (good R:R). Sustainable if R:R holds.`;
-  if (c.netPnl < 0 && c.winRate < 40) return `Weak: ${l}/${c.trades} losses, ${c.netPnl.toFixed(2)}. Low win rate suggests this coin's setups are fighting the trend — tighten its filter or pause it.`;
-  return `Roughly break-even (${c.netPnl.toFixed(2)}, ${c.winRate}% win). Needs more samples before judging; the stop is containing the losers.`;
-}
 
 /**
  * Live ⇄ Paper trading switch. Paper = simulated (no real orders); Live = real
@@ -886,7 +736,7 @@ function LivePositions({ positions, onClosed }: { positions: Position[]; onClose
             const cls = frac >= 0 ? 'badge-up' : 'badge-down';
             return (
               <tr key={p.id} className="border-t border-border">
-                <td>{p.symbol} <span className={long ? 'badge-up text-xs' : 'badge-down text-xs'}>{p.side}</span> <a href={`/chart/${p.symbol}`} className="text-accent text-xs hover:underline">📈</a></td>
+                <td>{p.symbol} <span className={long ? 'badge-up text-xs' : 'badge-down text-xs'}>{p.side}</span> <Link href={`/chart/${p.symbol}`} className="text-accent text-xs hover:underline">📈</Link></td>
                 <td className="text-center text-xs">{entry.toFixed(4)} → <b>{mark.toFixed(4)}</b></td>
                 <td className={`text-center ${cls}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</td>
                 <td className={`text-center text-xs ${cls}`}>{roe >= 0 ? '+' : ''}{roe.toFixed(1)}%</td>
@@ -921,7 +771,7 @@ function DynamicProtection({ positions, signals, slPercent, armPct, gapPct }: { 
   // got even after the live profit retraces. Floored by the persisted stop's locked
   // level so it stays sensible across a page reload.
   const peaksRef = useRef<Record<string, number>>({});
-  const chartBtn = (sym: string) => <a href={`/chart/${sym}`} className="text-accent text-xs hover:underline">📈 chart</a>;
+  const chartBtn = (sym: string) => <Link href={`/chart/${sym}`} className="text-accent text-xs hover:underline">📈 chart</Link>;
 
   return (
     <div className="card">
@@ -1273,10 +1123,12 @@ function MiniStat({ label, value, sub, signed }: { label: string; value: string;
     </div>
   );
 }
+type InfoTone = 'info' | 'warn' | 'good' | 'blue';
 function InfoCard({ icon, tone, text }: { icon: string; tone: InfoTone; text: string }) {
   const border = tone === 'good' ? 'border-accent/40' : tone === 'warn' ? 'border-warn/40' : tone === 'blue' ? 'border-sky-700/40' : 'border-border';
   return <div className={`card ${border}`}><p className="text-sm"><span className="mr-1">{icon}</span>{text}</p></div>;
 }
+interface TradeReason extends Trade { reason?: string; }
 function TradeReasonCard({ t }: { t: TradeReason }) {
   const gross = num(t.grossPnl);         // price-move P&L (before fees)
   const funding = num(t.funding);        // actual funding (±), 0 if none

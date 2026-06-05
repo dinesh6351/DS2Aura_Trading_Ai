@@ -13,12 +13,14 @@ import {
   signalsOverview, pivotLevels, multiTfTable,
 } from '../bot/analysis.service.js';
 import { selectStrategy, fearGreedHistory } from '../bot/strategy-selector.service.js';
+import { dashboardService } from './dashboard.service.js';
 
 export const tradingRouter = Router();
 tradingRouter.use(authenticate);
 const uid = (req: unknown) => (req as AuthedRequest).auth.userId;
 
 // ── Dashboard data ──────────────────────────────────────────────────────────
+tradingRouter.get('/dashboard-sync', asyncHandler(async (req, res) => ok(res, await dashboardService.dashboardSync(uid(req)))));
 tradingRouter.get('/account', asyncHandler(async (req, res) => ok(res, await tradingService.account(uid(req)))));
 tradingRouter.get('/positions', asyncHandler(async (req, res) => ok(res, await tradingService.positions(uid(req)))));
 /** POST /api/trading/positions/:id/close — user-initiated manual close (market). */

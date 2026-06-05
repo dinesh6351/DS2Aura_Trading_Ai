@@ -110,7 +110,7 @@ export function runSafetyCheck(
   check('Fear & Greed', up ? (fearGreed?.value ?? 50) <= 75 : (fearGreed?.value ?? 50) >= 25, 2, false, !!fearGreed && typeof fearGreed.value === 'number');
   // Critical gates
   check('Spread ≤ 0.1%', (spreadPct ?? 1) <= 0.001, 0, true, spreadPct != null);
-  check('Market verdict ≠ HIGH_RISK', marketVerdict !== 'HIGH_RISK', 0, true, !!marketVerdict);
+  check('Market verdict ≠ HIGH_RISK', marketVerdict !== 'HIGH_RISK', 5, false, !!marketVerdict);
   check(up ? 'BTC not bearish (alt-long gate)' : 'BTC not bullish (alt-short gate)',
     up ? btcTrend !== 'bearish' : btcTrend !== 'bullish', 0, true, !!btcTrend);
   check('Funding < 0.05%', Math.abs(funding ?? 0) < 0.0005, 0, true, funding != null);

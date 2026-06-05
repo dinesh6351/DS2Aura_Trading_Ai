@@ -123,11 +123,11 @@ export async function tickUser(userId: string): Promise<void> {
 
   if (cfg.paperTrading) {
     // 1. Calculate and sync simulated paper balance
-    const [trades, openPos] = await Promise.all([
-      prisma.tradeHistory.findMany({ where: { userId } }),
+    const [agg, openPos] = await Promise.all([
+      prisma.tradeHistory.aggregate({ _sum: { netPnl: true }, where: { userId } }),
       prisma.position.findMany({ where: { userId, status: 'OPEN' } })
     ]);
-    const paperPnl = trades.reduce((sum, t) => sum + Number(t.netPnl), 0);
+    const paperPnl = Number(agg._sum.netPnl ?? 0);
     const startBalance = 100.00; // user requested $100
     
     let totalUnrealized = 0;
